@@ -1,0 +1,183 @@
+現状
+あるもの：
+・ESP32-WROOM-32
+・ロボット本体 / 上下ユニット
+・4サーボ：左足・左腰・右足・右腰
+・配線類
+・モータドライバ / PCA9685系
+
+ないもの：
+・Raspberry Pi
+・音センサー
+・ライト
+・PlatformIOプロジェクト
+
+
+ロードマップ
+Phase 0：環境準備
+
+目標：PIOでESP32に書き込める状態にする
+
+やること：
+
+VS Codeを開く
+PlatformIO拡張を入れる
+New Project作成
+Board：Espressif ESP32 Dev Module
+Framework：Arduino
+platformio.ini を設定
+Hello Worldを書き込み
+
+完了条件：
+
+Serial Monitorに
+Hello PresentationEscort
+が出る
+
+
+Phase 1：サーボ原点調整
+
+目標：4サーボが0°で直立する
+
+やること：
+
+config.h 作成
+servo_control.h/cpp 作成
+PCA9685で4サーボを0°にする
+angleBias を調整
+直立姿勢を作る
+
+完了条件：
+
+STAND コマンドで倒れず直立する
+
+
+Phase 2：歩行モーション作成
+
+目標：前進できる
+
+やること：
+
+motion_library.h/cpp 作成
+motion_player.h/cpp 作成
+walking.h/cpp 作成
+startWalk
+forwardWalk
+stopWalk
+シリアルから FORWARD で歩かせる
+
+完了条件：
+
+FORWARD で2〜3歩進む
+STOP で足を揃えて止まる
+
+
+Phase 3：左右旋回
+
+目標：Raspberry Piなしでも手動操作できる
+
+やること：
+
+turnLeft
+turnRight
+serial_receive.h/cpp
+PCからコマンド操作
+
+完了条件：
+
+LEFT で左旋回
+RIGHT で右旋回
+STOP で停止
+
+
+Phase 4：発表用デモ最低ライン
+
+目標：歩くロボットとして見せられる状態
+
+やること：
+
+起動時に直立
+シリアルコマンドで操作
+倒れにくい歩幅に調整
+配線を固定
+モーション速度を調整
+
+完了条件：
+
+STAND
+FORWARD
+LEFT
+RIGHT
+STOP
+が安定して動く
+
+ここまでできれば、音センサー・ライト・Piなしでも発表の土台になります。
+
+
+Phase 5：ライト追加
+
+部品入手後
+
+やること：
+
+LEDまたは懐中電灯を取り付ける
+MOSFETでON/OFF制御
+light_control.h/cpp 作成
+LIGHT_ON
+LIGHT_OFF
+LIGHT_TOGGLE
+
+完了条件：
+
+LIGHT_ON で点灯
+LIGHT_OFF で消灯
+
+
+Phase 6：音センサー追加
+
+部品入手後
+
+やること：
+
+音センサー接続
+拍手のしきい値確認
+sound_sensor.h/cpp 作成
+1回拍手：ライトON/OFF
+2回拍手：停止/追従モード切替
+
+完了条件：
+
+1 clap → LIGHT_TOGGLE
+2 clap → FOLLOW/FIX 切替
+
+
+Phase 7：Raspberry Pi追加
+
+Raspberry Pi入手後
+
+やること：
+
+raspberry_pi/ 作成
+カメラ映像取得
+人物検出
+左右判定
+ESP32へシリアル送信
+
+完了条件：
+
+人が左にいる → LEFT
+人が右にいる → RIGHT
+遠い → FORWARD
+中央 → STOP
+まず今日やること
+1. PlatformIOプロジェクト作成
+2. ESP32へHello Worldを書き込む
+3. PCA9685ライブラリを入れる
+4. servo_controlを作る
+5. 4サーボを0°にする
+優先度
+最優先：
+PIO作成 → サーボ原点調整 → 歩行
+
+後回し：
+ライト → 音センサー → Raspberry Pi画像認識

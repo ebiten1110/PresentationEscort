@@ -1,0 +1,39 @@
+PresentationEscort/
+│
+├── raspberry_pi/
+│   ├── main.py
+│   ├── camera.py
+│   ├── detector.py
+│   ├── tracker.py
+│   ├── follow_controller.py
+│   ├── serial_sender.py
+│   ├── config.py
+│   └── command.py
+│
+├── esp32/
+│   ├── PresentationEscort.ino
+│   ├── servo_control.h
+│   ├── servo_control.cpp
+│   ├── motion_player.h
+│   ├── motion_player.cpp
+│   ├── motion_library.h
+│   ├── motion_library.cpp
+│   ├── walking.h
+│   ├── walking.cpp
+│   ├── light_control.h
+│   ├── light_control.cpp
+│   ├── sound_sensor.h
+│   ├── sound_sensor.cpp
+│   ├── serial_receive.h
+│   ├── serial_receive.cpp
+│   ├── command.h
+│   └── config.h
+│
+├── docs/
+│   ├── 配線図.pdf
+│   ├── 状態遷移図.drawio
+│   ├── シリアル通信仕様.md
+│   ├── 部品リスト.md
+│   └── 開発ロードマップ.md
+│
+└── README.md

@@ -1,0 +1,20 @@
+|  順 | ファイル名                    | 役割                                                    | 君に渡すプロンプト                                                                                                        |
+| -: | ------------------------ | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+|  1 | `config.h`               | ESP32側の設定。PCA9685のチャンネル、サーボ補正値、音センサーPIN、ライトPINなどをまとめる | 「ESP32-WROOM-32とPCA9685で4サーボ二足歩行ロボットを作ります。左腰・左足・右腰・右足のチャンネル設定、angleBias、ライト、音センサー、通信速度をまとめたconfig.hを作って」         |
+|  2 | `command.h`              | ESP32が受け取る命令名を定義する                                    | 「FORWARD、BACK、LEFT、RIGHT、STOP、STAND、LIGHT_ON、LIGHT_OFF、FOLLOW、FIXなどのコマンド定義をcommand.hで作って」                        |
+|  3 | `servo_control.cpp`      | PCA9685でサーボ角度を制御する。原点補正もここ                            | 「Adafruit PWM Servo Driver Libraryを使い、PCA9685で4サーボを制御するservo_control.h/cppを作って。angleBias補正、角度制限、centerAll関数も入れて」 |
+|  4 | `motion_library.cpp`     | 歩行・停止・旋回などのモーションデータ置き場                                | 「4サーボ二足歩行ロボット用に、stand、startWalk、forwardWalk、stopWalk、turnLeft、turnRightのモーション配列をmotion_library.h/cppで作って」        |
+|  5 | `motion_player.cpp`      | モーション配列を時間通りに再生する                                     | 「moveStep配列を読み取り、指定時間でサーボ角度を補間しながら再生するmotion_player.h/cppを作って」                                                   |
+|  6 | `walking.cpp`            | 歩行命令を扱う。前進、停止、左右旋回をMotionPlayerに投げる                   | 「walkForward、stopWalk、turnLeft、turnRight、standを呼べるwalking.h/cppを作って。内部ではMotionPlayerを使う構成にして」                    |
+|  7 | `light_control.cpp`      | スポットライトON/OFF                                         | 「ESP32でLEDまたはMOSFET制御するlight_control.h/cppを作って。on、off、toggle、isOnを用意して」                                          |
+|  8 | `sound_sensor.cpp`       | 拍手検知。1回/2回拍手を判定                                       | 「ESP32のアナログ音センサーで拍手を検知し、一定時間内の1回拍手と2回拍手を判定するsound_sensor.h/cppを作って」                                              |
+|  9 | `serial_receive.cpp`     | PCまたはRaspberry Piから命令を受け取る                            | 「Serialで文字列コマンドを受信し、FORWARD、LEFT、RIGHT、STOPなどに変換するserial_receive.h/cppを作って」                                      |
+| 10 | `PresentationEscort.ino` | ESP32側メイン。各機能を初期化してループで動かす                            | 「config、servo_control、walking、light_control、sound_sensor、serial_receiveを統合するArduino用PresentationEscort.inoを作って」  |
+| 11 | `config.py`              | Raspberry Pi側の設定                                      | 「Raspberry Pi側のカメラ番号、画面中心、追従しきい値、シリアルポート、通信速度をまとめたconfig.pyを作って」                                                 |
+| 12 | `command.py`             | PiからESP32へ送る命令名                                       | 「ESP32へ送るFORWARD、LEFT、RIGHT、STOP、LIGHT_ON、LIGHT_OFFなどのコマンド定義をcommand.pyで作って」                                     |
+| 13 | `serial_sender.py`       | ESP32へ命令送信                                            | 「pyserialでRaspberry PiからESP32へ文字列コマンドを送るserial_sender.pyを作って」                                                    |
+| 14 | `camera.py`              | カメラ映像取得                                               | 「OpenCVでRaspberry PiカメラまたはUSBカメラから映像を取得するcamera.pyを作って」                                                          |
+| 15 | `detector.py`            | 人物・顔検出                                                | 「OpenCVまたはMediaPipeで人の位置を検出し、中心X座標と検出サイズを返すdetector.pyを作って」                                                      |
+| 16 | `tracker.py`             | 検出結果を追跡・安定化                                           | 「detector.pyの検出結果を受け取り、中心座標を平滑化して見失い判定も行うtracker.pyを作って」                                                         |
+| 17 | `follow_controller.py`   | 人の位置から命令を決める                                          | 「画面中心と人物中心のズレからLEFT、RIGHT、FORWARD、STOPを決めるfollow_controller.pyを作って」                                              |
+| 18 | `main.py`                | Pi側メイン                                                | 「camera、detector、tracker、follow_controller、serial_senderを統合し、人を追従してESP32へ命令を送るmain.pyを作って」                       |

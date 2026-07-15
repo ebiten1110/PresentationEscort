@@ -1,0 +1,12 @@
+# PresentationEscort Raspberry Pi Config
+
+CAMERA_INDEX = 0
+
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
+
+CENTER_X = FRAME_WIDTH // 2
+CENTER_Y = FRAME_HEIGHT // 2
+
+# デバッグ表示
+SHOW_WINDOW = True

@@ -1,0 +1,63 @@
+Phase 5 全体目標
+Raspberry Pi 3 A+
+↓
+BSW3K03H Webカメラ
+↓
+Python / OpenCV
+↓
+カメラ映像を取得
+↓
+画面中心座標を表示
+↓
+最終的にESP32へ LEFT / RIGHT / STOP を送る
+Phase 5 作業順
+Phase 5-1：Raspberry Pi起動確認
+
+やること：
+
+1. Raspberry Pi OSを起動
+2. Wi-Fi接続
+3. ターミナルを開く
+4. Python確認
+5. USBカメラ認識確認
+
+確認コマンド：
+
+python3 --version
+lsusb
+
+lsusb でBUFFALOやWeb Cameraっぽい表示が出ればOKです。
+
+Phase 5-2：必要パッケージ導入
+
+Raspberry Piで実行します。
+
+sudo apt update
+sudo apt install -y python3-opencv python3-pip v4l-utils
+
+カメラ確認用：
+
+v4l2-ctl --list-devices
+
+ここで /dev/video0 が出れば、Webカメラが認識されています。
+
+Phase 5-3：フォルダ作成
+
+今の確定構成に合わせて、Raspberry Pi側はこうします。
+
+PresentationEscort/
+├── raspberry_pi/
+│   ├── main.py
+│   ├── camera.py
+│   ├── detector.py
+│   ├── tracker.py
+│   ├── follow_controller.py
+│   ├── serial_sender.py
+│   ├── config.py
+│   └── command.py
+
+まず作るのは最小構成だけです。
+
+raspberry_pi/
+├── camera_test.py
+├── config.py
