@@ -30,3 +30,12 @@ CENTER_TOLERANCE_X = 80
 SERIAL_PORT = "/dev/ttyUSB0"
 SERIAL_BAUD = 115200
 SERIAL_TIMEOUT = 1.0
+
+# Phase 5.5 Follow Test
+FOLLOW_TEST_IMAGE_PATH = "follow_test.jpg"
+
+# 顔が見つからなかったときに送る命令
+NO_FACE_COMMAND = "STOP"
+
+# 連続送信前の安全設定
+SEND_COMMAND_TO_ESP32 = True
