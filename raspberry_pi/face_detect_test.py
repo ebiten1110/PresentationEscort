@@ -37,7 +37,7 @@ def draw_center_guides(frame):
     center_y = height // 2
 
     cv2.line(frame, (center_x, 0), (center_x, height), (0, 255, 0), 1)
-    cv2.line(frame, (0, center_y), (width, center_y), 0, 1)
+    cv2.line(frame, (0, center_y), (width, center_y), (0, 255, 0), 1)
     cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
 
     cv2.putText(
@@ -59,13 +59,15 @@ def detect_faces(frame):
     """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    cascade_path = "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml"
     face_cascade = cv2.CascadeClassifier(cascade_path)
 
     if face_cascade.empty():
         print("[FaceDetect] ERROR: Haar Cascade を読み込めませんでした")
         print(f"[FaceDetect] Path: {cascade_path}")
         return []
+
+    print(f"[FaceDetect] Cascade loaded: {cascade_path}")
 
     faces = face_cascade.detectMultiScale(
         gray,
