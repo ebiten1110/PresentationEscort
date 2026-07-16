@@ -39,3 +39,19 @@ NO_FACE_COMMAND = "STOP"
 
 # 連続送信前の安全設定
 SEND_COMMAND_TO_ESP32 = True
+
+# Phase 5.6 Follow Loop
+FOLLOW_LOOP_IMAGE_PATH = "follow_loop_latest.jpg"
+
+# 追従ループ間隔 秒
+FOLLOW_LOOP_INTERVAL = 1.0
+
+# 最大ループ回数
+# None にすると無限ループ
+FOLLOW_LOOP_MAX_COUNT = 20
+
+# 同じコマンドを連続送信しない
+SEND_ONLY_ON_CHANGE = True
+
+# 顔が見つからない連続回数がこの数を超えたらSTOP送信
+NO_FACE_STOP_THRESHOLD = 2
