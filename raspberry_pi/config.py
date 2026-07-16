@@ -25,3 +25,8 @@ FACE_POSITION_IMAGE_PATH = "face_position_test.jpg"
 
 # 中央判定の許容範囲
 CENTER_TOLERANCE_X = 80
+
+# ESP32 Serial
+SERIAL_PORT = "/dev/ttyUSB0"
+SERIAL_BAUD = 115200
+SERIAL_TIMEOUT = 1.0
