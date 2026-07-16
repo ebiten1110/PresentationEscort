@@ -19,3 +19,9 @@ SAVE_IMAGE_PATH = "camera_test.jpg"
 
 # 顔検出結果の保存先
 FACE_DETECT_IMAGE_PATH = "face_detect_test.jpg"
+
+# 顔位置判定結果の保存先
+FACE_POSITION_IMAGE_PATH = "face_position_test.jpg"
+
+# 中央判定の許容範囲
+CENTER_TOLERANCE_X = 80
