@@ -54,4 +54,22 @@ FOLLOW_LOOP_MAX_COUNT = 20
 SEND_ONLY_ON_CHANGE = True
 
 # 顔が見つからない連続回数がこの数を超えたらSTOP送信
-NO_FACE_STOP_THRESHOLD = 2
+NO_FACE_STOP_THRESHOLD = 5
+
+# Phase 5.7 Advanced Follow
+
+# 左右の中央許容範囲
+CENTER_TOLERANCE_X = 80
+
+# 上下の中央許容範囲
+CENTER_TOLERANCE_Y = 60
+
+# 顔サイズによる距離判定
+# 顔の幅がこれより小さいなら遠い
+FACE_FAR_WIDTH = 80
+
+# 顔の幅がこれより大きいなら近い
+FACE_NEAR_WIDTH = 180
+
+# 距離判定結果画像
+ADVANCED_FOLLOW_IMAGE_PATH = "advanced_follow_test.jpg"
