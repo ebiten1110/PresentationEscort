@@ -73,3 +73,25 @@ FACE_NEAR_WIDTH = 180
 
 # 距離判定結果画像
 ADVANCED_FOLLOW_IMAGE_PATH = "advanced_follow_test.jpg"
+# Phase 5.8 Advanced Follow Loop
+
+ADVANCED_FOLLOW_LOOP_IMAGE_PATH = "advanced_follow_loop_latest.jpg"
+
+# 追従ループ間隔 秒
+ADVANCED_FOLLOW_LOOP_INTERVAL = 1.0
+
+# 最大ループ回数
+# None にすると無限ループ
+ADVANCED_FOLLOW_LOOP_MAX_COUNT = 40
+
+# 同じ命令を連続送信しない
+ADVANCED_SEND_ONLY_ON_CHANGE = True
+
+# 顔が見つからない状態が続いたらSTOPする回数
+ADVANCED_NO_FACE_STOP_THRESHOLD = 5
+
+# 頭コマンドも送信するか
+SEND_HEAD_COMMAND = True
+
+# 歩行コマンドも送信するか
+SEND_MOVE_COMMAND = True
