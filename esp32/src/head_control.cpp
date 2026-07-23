@@ -29,32 +29,44 @@ static const int HEAD_PITCH_MIN_ANGLE = -12;
 static const int HEAD_PITCH_MAX_ANGLE = 12;
 
 
-// コマンドを1回受け取ったときに変える目標角度
-static const int HEAD_YAW_NUDGE_ANGLE = 2;
+// ============================================================
+// 1回のコマンドで動かす目標角度
+// ============================================================
+
+// HEAD_LEFT / HEAD_RIGHTを1回受信するごとに1度変更
+static const int HEAD_YAW_NUDGE_ANGLE = 1;
+
+// HEAD_UP / HEAD_DOWNを1回受信するごとに1度変更
 static const int HEAD_PITCH_NUDGE_ANGLE = 1;
 
 
-// updateHeadControl() 1回の有効更新で動かす角度
+// ============================================================
+// 滑らかなサーボ移動
+// ============================================================
+
+// 1回の更新で実際のサーボ角度を1度だけ変更
 static const int HEAD_SMOOTH_STEP_ANGLE = 1;
 
-
-// サーボ角度を更新する間隔
-// 50msなら、最大で1秒に20度動く。
+// 1度動かす間隔
+// 50msなら、最大で1秒に20度動く
 static const unsigned long HEAD_UPDATE_INTERVAL_MS = 50;
 
 
-// 実機で上下が逆の場合は、次の符号を入れ替える。
+// ============================================================
+// サーボ取り付け方向
+// ============================================================
+
+// 実機で上下が逆の場合は、符号を入れ替える
 static const int HEAD_PITCH_UP_DIRECTION = -1;
 static const int HEAD_PITCH_DOWN_DIRECTION = 1;
 
-
-// 実機で左右が逆の場合は、次の符号を入れ替える。
+// 実機で左右が逆の場合は、符号を入れ替える
 static const int HEAD_YAW_LEFT_DIRECTION = -1;
 static const int HEAD_YAW_RIGHT_DIRECTION = 1;
 
 
 // ============================================================
-// 状態
+// 現在角度・目標角度
 // ============================================================
 
 static int currentYawAngle = HEAD_YAW_CENTER_ANGLE;
@@ -87,24 +99,16 @@ static int clampAngle(
 }
 
 
-static int moveToward(
+static int moveTowardByOneDegree(
     int currentValue,
-    int targetValue,
-    int step
+    int targetValue
 ) {
     if (currentValue < targetValue) {
-        currentValue += step;
-
-        if (currentValue > targetValue) {
-            currentValue = targetValue;
-        }
+        return currentValue + 1;
     }
-    else if (currentValue > targetValue) {
-        currentValue -= step;
 
-        if (currentValue < targetValue) {
-            currentValue = targetValue;
-        }
+    if (currentValue > targetValue) {
+        return currentValue - 1;
     }
 
     return currentValue;
@@ -117,8 +121,14 @@ static void printTargetAngles(
     Serial.print("[Head] ");
     Serial.print(action);
 
+    Serial.print(" currentYaw=");
+    Serial.print(currentYawAngle);
+
     Serial.print(" targetYaw=");
     Serial.print(targetYawAngle);
+
+    Serial.print(" currentPitch=");
+    Serial.print(currentPitchAngle);
 
     Serial.print(" targetPitch=");
     Serial.println(targetPitchAngle);
@@ -155,7 +165,7 @@ void initHeadControl() {
 
 
 // ============================================================
-// 滑らか移動
+// 1度ずつ滑らかに移動
 // ============================================================
 
 void updateHeadControl() {
@@ -173,19 +183,18 @@ void updateHeadControl() {
     const int previousYaw = currentYawAngle;
     const int previousPitch = currentPitchAngle;
 
-    currentYawAngle = moveToward(
+    // 目標角度へ1度ずつ近づける
+    currentYawAngle = moveTowardByOneDegree(
         currentYawAngle,
-        targetYawAngle,
-        HEAD_SMOOTH_STEP_ANGLE
+        targetYawAngle
     );
 
-    currentPitchAngle = moveToward(
+    currentPitchAngle = moveTowardByOneDegree(
         currentPitchAngle,
-        targetPitchAngle,
-        HEAD_SMOOTH_STEP_ANGLE
+        targetPitchAngle
     );
 
-    // 角度が変化したときだけPCA9685へ送信する。
+    // 角度が変わった場合だけPCA9685へ送信
     if (currentYawAngle != previousYaw) {
         setServoAngle(
             HEAD_YAW_CHANNEL,
@@ -203,7 +212,7 @@ void updateHeadControl() {
 
 
 // ============================================================
-// 左右
+// 左右：1回の受信につき目標角度を1度変更
 // ============================================================
 
 void headLeft() {
@@ -218,7 +227,7 @@ void headLeft() {
         HEAD_YAW_MAX_ANGLE
     );
 
-    printTargetAngles("NUDGE_LEFT");
+    printTargetAngles("NUDGE_LEFT_1_DEG");
 }
 
 
@@ -234,12 +243,12 @@ void headRight() {
         HEAD_YAW_MAX_ANGLE
     );
 
-    printTargetAngles("NUDGE_RIGHT");
+    printTargetAngles("NUDGE_RIGHT_1_DEG");
 }
 
 
 // ============================================================
-// 上下
+// 上下：1回の受信につき目標角度を1度変更
 // ============================================================
 
 void headUp() {
@@ -254,7 +263,7 @@ void headUp() {
         HEAD_PITCH_MAX_ANGLE
     );
 
-    printTargetAngles("NUDGE_UP");
+    printTargetAngles("NUDGE_UP_1_DEG");
 }
 
 
@@ -270,19 +279,19 @@ void headDown() {
         HEAD_PITCH_MAX_ANGLE
     );
 
-    printTargetAngles("NUDGE_DOWN");
+    printTargetAngles("NUDGE_DOWN_1_DEG");
 }
 
 
 // ============================================================
-// 中央
+// 中央：目標を0度にして、1度ずつ中央へ戻す
 // ============================================================
 
 void headCenter() {
     targetYawAngle = HEAD_YAW_CENTER_ANGLE;
     targetPitchAngle = HEAD_PITCH_CENTER_ANGLE;
 
-    printTargetAngles("SMOOTH_CENTER");
+    printTargetAngles("SMOOTH_CENTER_1_DEG");
 }
 
 
