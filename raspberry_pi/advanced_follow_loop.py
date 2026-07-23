@@ -3,59 +3,100 @@ import time
 import cv2
 import serial
 
-from config import (
-    # カメラ
-    CAMERA_MODE,
-    IP_CAMERA_URL,
-    CAMERA_INDEX,
-    FRAME_WIDTH,
-    FRAME_HEIGHT,
+import config as cfg
 
-    # シリアル
-    SERIAL_PORT,
-    SERIAL_BAUD,
-    SERIAL_TIMEOUT,
-    SEND_COMMAND_TO_ESP32,
 
-    # 位置・距離判定
-    CENTER_TOLERANCE_X,
-    CENTER_TOLERANCE_Y,
-    CAMERA_CENTER_OFFSET_X,
-    CAMERA_CENTER_OFFSET_Y,
-    X_HYSTERESIS,
-    Y_HYSTERESIS,
-    FACE_FAR_WIDTH,
-    FACE_NEAR_WIDTH,
-    DISTANCE_HYSTERESIS,
+# ============================================================
+# 設定値
+# config.pyに値がない場合は、右側の初期値を使用する
+# ============================================================
 
-    # 判定確定
-    MOVE_CONFIRM_FRAMES,
-    STOP_CONFIRM_FRAMES,
-    HEAD_CONFIRM_FRAMES,
-    ADVANCED_NO_FACE_STOP_THRESHOLD,
+# カメラ
+CAMERA_MODE = getattr(cfg, "CAMERA_MODE", "usb")
+IP_CAMERA_URL = getattr(cfg, "IP_CAMERA_URL", "")
+CAMERA_INDEX = getattr(cfg, "CAMERA_INDEX", 0)
+FRAME_WIDTH = getattr(cfg, "FRAME_WIDTH", 640)
+FRAME_HEIGHT = getattr(cfg, "FRAME_HEIGHT", 480)
+MIRROR_CAMERA_IMAGE = getattr(cfg, "MIRROR_CAMERA_IMAGE", False)
 
-    # コマンド送信
-    ADVANCED_SEND_ONLY_ON_CHANGE,
-    MOVE_REPEAT_INTERVAL,
-    SEND_MOVE_COMMAND,
-    SEND_HEAD_COMMAND,
-    INVERT_HORIZONTAL_COMMANDS,
+# シリアル
+SERIAL_PORT = getattr(cfg, "SERIAL_PORT", "/dev/ttyUSB0")
+SERIAL_BAUD = getattr(cfg, "SERIAL_BAUD", 115200)
+SERIAL_TIMEOUT = getattr(cfg, "SERIAL_TIMEOUT", 1.0)
+SEND_COMMAND_TO_ESP32 = getattr(cfg, "SEND_COMMAND_TO_ESP32", True)
 
-    # ループ
-    ADVANCED_FOLLOW_LOOP_INTERVAL,
-    ADVANCED_FOLLOW_LOOP_MAX_COUNT,
+# 位置・距離判定
+CENTER_TOLERANCE_X = getattr(cfg, "CENTER_TOLERANCE_X", 35)
+CENTER_TOLERANCE_Y = getattr(cfg, "CENTER_TOLERANCE_Y", 35)
+CAMERA_CENTER_OFFSET_X = getattr(cfg, "CAMERA_CENTER_OFFSET_X", 0)
+CAMERA_CENTER_OFFSET_Y = getattr(cfg, "CAMERA_CENTER_OFFSET_Y", 0)
+X_HYSTERESIS = getattr(cfg, "X_HYSTERESIS", 8)
+Y_HYSTERESIS = getattr(cfg, "Y_HYSTERESIS", 8)
+FACE_FAR_WIDTH = getattr(cfg, "FACE_FAR_WIDTH", 140)
+FACE_NEAR_WIDTH = getattr(cfg, "FACE_NEAR_WIDTH", 230)
+DISTANCE_HYSTERESIS = getattr(cfg, "DISTANCE_HYSTERESIS", 8)
 
-    # 保存・検出
-    ADVANCED_FOLLOW_LOOP_IMAGE_PATH,
-    SAVE_RESULT_IMAGE,
-    SAVE_RESULT_EVERY_N_LOOPS,
-    ENABLE_HISTOGRAM_EQUALIZATION,
+# 判定確定
+MOVE_CONFIRM_FRAMES = getattr(cfg, "MOVE_CONFIRM_FRAMES", 1)
+STOP_CONFIRM_FRAMES = getattr(cfg, "STOP_CONFIRM_FRAMES", 1)
+HEAD_CONFIRM_FRAMES = getattr(cfg, "HEAD_CONFIRM_FRAMES", 1)
+NO_FACE_STOP_THRESHOLD = getattr(
+    cfg,
+    "ADVANCED_NO_FACE_STOP_THRESHOLD",
+    2,
 )
 
+# コマンド送信
+SEND_ONLY_ON_CHANGE = getattr(
+    cfg,
+    "ADVANCED_SEND_ONLY_ON_CHANGE",
+    True,
+)
+MOVE_REPEAT_INTERVAL = getattr(cfg, "MOVE_REPEAT_INTERVAL", 0.6)
+SEND_MOVE_COMMAND = getattr(cfg, "SEND_MOVE_COMMAND", True)
+SEND_HEAD_COMMAND = getattr(cfg, "SEND_HEAD_COMMAND", True)
+INVERT_HORIZONTAL_COMMANDS = getattr(
+    cfg,
+    "INVERT_HORIZONTAL_COMMANDS",
+    False,
+)
 
-CASCADE_PATH = (
-    "/usr/share/opencv4/haarcascades/"
-    "haarcascade_frontalface_default.xml"
+# ループ
+FOLLOW_LOOP_INTERVAL = getattr(
+    cfg,
+    "ADVANCED_FOLLOW_LOOP_INTERVAL",
+    0.15,
+)
+FOLLOW_LOOP_MAX_COUNT = getattr(
+    cfg,
+    "ADVANCED_FOLLOW_LOOP_MAX_COUNT",
+    None,
+)
+
+# 保存・検出
+RESULT_IMAGE_PATH = getattr(
+    cfg,
+    "ADVANCED_FOLLOW_LOOP_IMAGE_PATH",
+    "advanced_follow_loop_latest.jpg",
+)
+SAVE_RESULT_IMAGE = getattr(cfg, "SAVE_RESULT_IMAGE", True)
+SAVE_RESULT_EVERY_N_LOOPS = max(
+    1,
+    getattr(cfg, "SAVE_RESULT_EVERY_N_LOOPS", 5),
+)
+ENABLE_HISTOGRAM_EQUALIZATION = getattr(
+    cfg,
+    "ENABLE_HISTOGRAM_EQUALIZATION",
+    True,
+)
+
+CASCADE_PATH = getattr(
+    cfg,
+    "HAAR_CASCADE_PATH",
+    (
+        "/usr/share/opencv4/haarcascades/"
+        "haarcascade_frontalface_default.xml"
+    ),
 )
 
 
@@ -79,9 +120,10 @@ def open_camera():
         print('[Camera] "usb" または "ip" を指定してください。')
         return None
 
-    # 対応しているカメラの場合のみ反映される
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+
+    # 対応カメラのみ反映される。
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     return cap
@@ -110,22 +152,20 @@ def detect_faces(frame, face_cascade):
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    # 暗めの環境でコントラストを改善する
+    # 暗めの環境でコントラストを改善する。
     if ENABLE_HISTOGRAM_EQUALIZATION:
         gray = cv2.equalizeHist(gray)
 
-    faces = face_cascade.detectMultiScale(
+    return face_cascade.detectMultiScale(
         gray,
         scaleFactor=1.08,
         minNeighbors=4,
         minSize=(24, 24),
     )
 
-    return faces
-
 
 def select_main_face(faces):
-    """複数の顔がある場合、最も大きい顔を追従対象にする。"""
+    """複数顔がある場合、最も大きい顔を追従対象にする。"""
 
     if len(faces) == 0:
         return None
@@ -134,7 +174,7 @@ def select_main_face(faces):
 
 
 # ============================================================
-# ヒステリシス付き位置判定
+# ヒステリシス付き判定
 # ============================================================
 
 class HorizontalController:
@@ -151,7 +191,7 @@ class HorizontalController:
         inner = max(0, CENTER_TOLERANCE_X - X_HYSTERESIS)
 
         if self.state == "LEFT":
-            # 一度LEFTになったら、中央寄りへ十分戻るまで維持する
+            # LEFTへ入った後は、十分中央へ戻るまで維持する。
             if diff_x >= -inner:
                 self.state = "CENTER"
 
@@ -160,7 +200,7 @@ class HorizontalController:
                 self.state = "CENTER"
 
         else:
-            # CENTERから左右へ入るときは外側のしきい値を使う
+            # CENTERから左右へ移るときは外側の境界を使う。
             if diff_x <= -outer:
                 self.state = "LEFT"
             elif diff_x >= outer:
@@ -191,7 +231,7 @@ class VerticalController:
                 self.state = "CENTER"
 
         else:
-            # 画像では上側ほどY座標が小さい
+            # 画像では上ほどY座標が小さい。
             if diff_y <= -outer:
                 self.state = "UP"
             elif diff_y >= outer:
@@ -242,15 +282,7 @@ class DistanceController:
 # ============================================================
 
 class CommandStabilizer:
-    """
-    同じ候補コマンドが指定回数連続した場合のみ確定する。
-
-    confirmed:
-        現在確定しているコマンド
-
-    pending:
-        現在確認中の候補コマンド
-    """
+    """同じ候補が指定回数続いた場合にコマンドを確定する。"""
 
     def __init__(self, initial_command):
         self.confirmed = initial_command
@@ -258,18 +290,18 @@ class CommandStabilizer:
         self.pending_count = 0
 
     def force(self, command):
-        """安全停止など、待たずに即座に確定する。"""
+        """安全停止など、待たずにコマンドを確定する。"""
 
         changed = command != self.confirmed
-
         self.confirmed = command
         self.pending = None
         self.pending_count = 0
-
         return self.confirmed, changed, 0
 
     def update(self, candidate, required_frames):
-        """候補が指定回数続いた場合に確定する。"""
+        """候補が必要回数続いた場合に確定する。"""
+
+        required_frames = max(1, required_frames)
 
         if candidate == self.confirmed:
             self.pending = None
@@ -296,7 +328,7 @@ class CommandStabilizer:
 # ============================================================
 
 def horizontal_state_to_command(horizontal_state):
-    """左右状態をESP32のコマンドへ変換する。"""
+    """左右状態をESP32コマンドへ変換する。"""
 
     if horizontal_state == "LEFT":
         command = "LEFT"
@@ -311,8 +343,16 @@ def horizontal_state_to_command(horizontal_state):
     return command
 
 
-def vertical_state_to_command(vertical_state):
-    """上下状態を頭サーボ用コマンドへ変換する。"""
+def vertical_state_to_command(
+    vertical_state,
+    current_head_command,
+):
+    """
+    顔が上下へずれた場合だけ頭を動かす。
+
+    CENTERへ入った場合はHEAD_CENTERへ戻さず、
+    現在の頭位置を維持する。
+    """
 
     if vertical_state == "UP":
         return "HEAD_UP"
@@ -320,7 +360,7 @@ def vertical_state_to_command(vertical_state):
     if vertical_state == "DOWN":
         return "HEAD_DOWN"
 
-    return "HEAD_CENTER"
+    return current_head_command
 
 
 def decide_move_candidate(
@@ -333,7 +373,7 @@ def decide_move_candidate(
 
     優先順位:
     1. NEARなら即STOP
-    2. 左右にずれている場合はLEFT / RIGHT
+    2. 左右にずれていればLEFT / RIGHT
     3. 中央かつFARならFORWARD
     4. 中央かつGOODならSTOP
     """
@@ -343,10 +383,13 @@ def decide_move_candidate(
 
     if horizontal_state in ("LEFT", "RIGHT"):
         command = horizontal_state_to_command(horizontal_state)
-        return command, f"顔が中央から{horizontal_state}方向へずれている"
+        return (
+            command,
+            f"顔が中央から{horizontal_state}方向へずれている",
+        )
 
     if distance_state == "FAR":
-        # 旋回直後にいきなり前進せず、一度STOPを挟む
+        # 旋回から前進へ直接切り替えず、一度STOPを挟む。
         if current_confirmed_command in ("LEFT", "RIGHT"):
             return "STOP", "旋回完了後、前進前に一度停止する"
 
@@ -379,10 +422,9 @@ class ESP32Serial:
             timeout=SERIAL_TIMEOUT,
         )
 
-        # ポートを開くとESP32が再起動する場合がある
+        # ポートを開くとESP32が再起動する場合がある。
         time.sleep(2.0)
         print("[Serial] Opened")
-
         self.read_available(0.5)
 
     def close(self):
@@ -400,7 +442,6 @@ class ESP32Serial:
             return False
 
         message = command.strip().upper() + "\n"
-
         self.ser.write(message.encode("utf-8"))
         self.ser.flush()
 
@@ -439,7 +480,6 @@ def draw_result(
     """最新の検出・判定結果を画像へ描画する。"""
 
     height, width = frame.shape[:2]
-
     center_x = width // 2 + CAMERA_CENTER_OFFSET_X
     center_y = height // 2 + CAMERA_CENTER_OFFSET_Y
 
@@ -451,7 +491,6 @@ def draw_result(
         (0, 255, 0),
         1,
     )
-
     cv2.line(
         frame,
         (0, center_y),
@@ -468,7 +507,6 @@ def draw_result(
         (0, 255, 255),
         1,
     )
-
     cv2.line(
         frame,
         (center_x + CENTER_TOLERANCE_X, 0),
@@ -476,7 +514,6 @@ def draw_result(
         (0, 255, 255),
         1,
     )
-
     cv2.line(
         frame,
         (0, center_y - CENTER_TOLERANCE_Y),
@@ -484,7 +521,6 @@ def draw_result(
         (255, 255, 0),
         1,
     )
-
     cv2.line(
         frame,
         (0, center_y + CENTER_TOLERANCE_Y),
@@ -515,7 +551,6 @@ def draw_result(
             (255, 0, 0),
             2,
         )
-
         cv2.circle(
             frame,
             (face_center_x, face_center_y),
@@ -533,7 +568,6 @@ def draw_result(
             (255, 255, 255),
             2,
         )
-
         cv2.putText(
             frame,
             f"Diff=({result['diff_x']},{result['diff_y']})",
@@ -567,7 +601,6 @@ def draw_result(
         (255, 255, 255),
         2,
     )
-
     cv2.putText(
         frame,
         (
@@ -580,7 +613,6 @@ def draw_result(
         (0, 255, 255),
         2,
     )
-
     cv2.putText(
         frame,
         f"Head={result['confirmed_head']}",
@@ -590,7 +622,6 @@ def draw_result(
         (0, 255, 255),
         2,
     )
-
     cv2.putText(
         frame,
         f"Loop={loop_count}",
@@ -613,19 +644,36 @@ def main():
     print("Presentation Escort Phase 5.9")
     print("Stable Advanced Follow Loop")
     print("================================================")
+    print(
+        f"[Config] mirror={MIRROR_CAMERA_IMAGE}, "
+        f"invertHorizontal={INVERT_HORIZONTAL_COMMANDS}"
+    )
+    print(
+        f"[Config] tolerance=({CENTER_TOLERANCE_X},"
+        f"{CENTER_TOLERANCE_Y}), "
+        f"hysteresis=({X_HYSTERESIS},{Y_HYSTERESIS})"
+    )
+    print(
+        f"[Config] distance FAR<{FACE_FAR_WIDTH}, "
+        f"NEAR>{FACE_NEAR_WIDTH}"
+    )
+
+    if MIRROR_CAMERA_IMAGE and INVERT_HORIZONTAL_COMMANDS:
+        print(
+            "[Config] WARN: 映像反転とコマンド反転が両方有効です。"
+            "二重反転になっていないか確認してください。"
+        )
 
     face_cascade = load_face_cascade()
-
     if face_cascade is None:
         return
 
     cap = open_camera()
-
     if cap is None or not cap.isOpened():
         print("[Camera] ERROR: カメラを開けませんでした。")
         return
 
-    # 起動直後の不安定なフレームを捨てる
+    # 起動直後の不安定なフレームを捨てる。
     for _ in range(5):
         cap.read()
 
@@ -665,8 +713,8 @@ def main():
             loop_started = time.monotonic()
 
             if (
-                ADVANCED_FOLLOW_LOOP_MAX_COUNT is not None
-                and loop_count >= ADVANCED_FOLLOW_LOOP_MAX_COUNT
+                FOLLOW_LOOP_MAX_COUNT is not None
+                and loop_count >= FOLLOW_LOOP_MAX_COUNT
             ):
                 print("[Loop] 最大ループ回数へ到達しました。")
                 break
@@ -679,8 +727,10 @@ def main():
                 print("[Camera] ERROR: フレーム取得に失敗しました。")
                 break
 
-            height, width = frame.shape[:2]
+            if MIRROR_CAMERA_IMAGE:
+                frame = cv2.flip(frame, 1)
 
+            height, width = frame.shape[:2]
             screen_center_x = (
                 width // 2 + CAMERA_CENTER_OFFSET_X
             )
@@ -691,10 +741,9 @@ def main():
             faces = detect_faces(frame, face_cascade)
             main_face = select_main_face(faces)
 
-            # 初期表示用
+            # 描画・ログ用の初期値
             diff_x = 0
             diff_y = 0
-            face_width = 0
 
             horizontal_state = horizontal_controller.state
             vertical_state = vertical_controller.state
@@ -710,16 +759,15 @@ def main():
             allow_move_repeat = False
 
             if main_face is None:
-                # ------------------------------------------------
+                # -----------------------------------------------
                 # 顔を見失った場合
-                # ------------------------------------------------
+                # -----------------------------------------------
                 no_face_count += 1
 
-                if no_face_count >= ADVANCED_NO_FACE_STOP_THRESHOLD:
+                if no_face_count >= NO_FACE_STOP_THRESHOLD:
                     confirmed_move, _, _ = move_stabilizer.force(
                         "STOP"
                     )
-
                     confirmed_head, _, _ = head_stabilizer.force(
                         "HEAD_CENTER"
                     )
@@ -731,7 +779,6 @@ def main():
                     horizontal_state = "CENTER"
                     vertical_state = "CENTER"
                     distance_state = "UNKNOWN"
-
                     candidate_move = "STOP"
                     candidate_head = "HEAD_CENTER"
 
@@ -739,17 +786,15 @@ def main():
                         f"顔ロストが{no_face_count}回続いたため安全停止"
                     )
                 else:
-                    # 猶予中は以前の状態を維持するが、
-                    # 移動コマンドの再送はしない
+                    # 猶予中は以前の状態を維持する。
+                    # 移動コマンドの再送は行わない。
                     confirmed_move = move_stabilizer.confirmed
                     confirmed_head = head_stabilizer.confirmed
-
                     distance_state = "UNKNOWN"
 
                     reason = (
                         f"顔ロスト猶予中 "
-                        f"{no_face_count}/"
-                        f"{ADVANCED_NO_FACE_STOP_THRESHOLD}"
+                        f"{no_face_count}/{NO_FACE_STOP_THRESHOLD}"
                     )
 
                 print(
@@ -761,16 +806,14 @@ def main():
                 )
 
             else:
-                # ------------------------------------------------
+                # -----------------------------------------------
                 # 顔を検出した場合
-                # ------------------------------------------------
+                # -----------------------------------------------
                 no_face_count = 0
 
                 x, y, w, h = main_face
-
                 face_center_x = x + w // 2
                 face_center_y = y + h // 2
-                face_width = w
 
                 diff_x = face_center_x - screen_center_x
                 diff_y = face_center_y - screen_center_y
@@ -778,14 +821,10 @@ def main():
                 horizontal_state = horizontal_controller.update(
                     diff_x
                 )
-
                 vertical_state = vertical_controller.update(
                     diff_y
                 )
-
-                distance_state = distance_controller.update(
-                    face_width
-                )
+                distance_state = distance_controller.update(w)
 
                 candidate_move, reason = decide_move_candidate(
                     horizontal_state,
@@ -793,11 +832,14 @@ def main():
                     move_stabilizer.confirmed,
                 )
 
+                # 顔が上下中央に入ってもHEAD_CENTERへ戻さず、
+                # 現在の頭位置を維持する。
                 candidate_head = vertical_state_to_command(
-                    vertical_state
+                    vertical_state,
+                    head_stabilizer.confirmed,
                 )
 
-                # NEARは確認回数を待たず即時STOP
+                # NEARは確認回数を待たず即時STOP。
                 if distance_state == "NEAR":
                     confirmed_move, _, _ = move_stabilizer.force(
                         "STOP"
@@ -850,15 +892,14 @@ def main():
             now = time.monotonic()
             sent_any_command = False
 
-            # ----------------------------------------------------
+            # -----------------------------------------------
             # 頭コマンド送信
-            # ----------------------------------------------------
+            # -----------------------------------------------
             if SEND_HEAD_COMMAND:
                 should_send_head = False
 
-                if not ADVANCED_SEND_ONLY_ON_CHANGE:
+                if not SEND_ONLY_ON_CHANGE:
                     should_send_head = True
-
                 elif confirmed_head != last_sent_head:
                     should_send_head = True
 
@@ -867,17 +908,16 @@ def main():
                         last_sent_head = confirmed_head
                         sent_any_command = True
 
-            # ----------------------------------------------------
+            # -----------------------------------------------
             # 歩行コマンド送信
-            # ----------------------------------------------------
+            # -----------------------------------------------
             if SEND_MOVE_COMMAND:
                 should_send_move = False
 
-                # コマンドが変わった場合
                 if confirmed_move != last_sent_move:
+                    # コマンドが変わった場合
                     should_send_move = True
 
-                # 同じ移動命令でも、ESP32側が一回動作なら定期再送する
                 elif (
                     allow_move_repeat
                     and confirmed_move
@@ -885,9 +925,11 @@ def main():
                     and now - last_move_sent_time
                     >= MOVE_REPEAT_INTERVAL
                 ):
+                    # ESP32側が一回モーションの場合、
+                    # 同じ移動命令を定期的に再送する。
                     should_send_move = True
 
-                elif not ADVANCED_SEND_ONLY_ON_CHANGE:
+                elif not SEND_ONLY_ON_CHANGE:
                     should_send_move = True
 
                 if should_send_move:
@@ -915,23 +957,36 @@ def main():
                 and loop_count % SAVE_RESULT_EVERY_N_LOOPS == 0
             ):
                 result_frame = draw_result(
-                    frame,
+                    frame.copy(),
                     faces,
                     main_face,
                     result,
                     loop_count,
                 )
 
-                cv2.imwrite(
-                    ADVANCED_FOLLOW_LOOP_IMAGE_PATH,
+                saved = cv2.imwrite(
+                    RESULT_IMAGE_PATH,
                     result_frame,
                 )
 
-            # 一定周期になるよう、処理時間を差し引いて待機する
+                if not saved:
+                    print(
+                        f"[Image] WARN: 保存に失敗しました: "
+                        f"{RESULT_IMAGE_PATH}"
+                    )
+
+            # -----------------------------------------------
+            # 処理時間表示とループ周期調整
+            # -----------------------------------------------
             elapsed = time.monotonic() - loop_started
-            sleep_time = (
-                ADVANCED_FOLLOW_LOOP_INTERVAL - elapsed
+            processing_ms = elapsed * 1000
+
+            print(
+                f"[Performance] loop={processing_ms:.1f}ms "
+                f"target={FOLLOW_LOOP_INTERVAL * 1000:.0f}ms"
             )
+
+            sleep_time = FOLLOW_LOOP_INTERVAL - elapsed
 
             if sleep_time > 0:
                 time.sleep(sleep_time)
@@ -964,7 +1019,6 @@ def main():
 
         esp32.close()
         cap.release()
-
         print("[Main] Finished.")
 
 
