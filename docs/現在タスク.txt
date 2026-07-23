@@ -1,63 +1,317 @@
-Phase 5 全体目標
-Raspberry Pi 3 A+
-↓
-BSW3K03H Webカメラ
-↓
-Python / OpenCV
-↓
-カメラ映像を取得
-↓
-画面中心座標を表示
-↓
-最終的にESP32へ LEFT / RIGHT / STOP を送る
-Phase 5 作業順
-Phase 5-1：Raspberry Pi起動確認
 
-やること：
+Phase 5.10：顔検出方式の切り替え対応
+Presentation EscortのPhase 5.10「顔検出方式の切り替え対応」を実装します。
 
-1. Raspberry Pi OSを起動
-2. Wi-Fi接続
-3. ターミナルを開く
-4. Python確認
-5. USBカメラ認識確認
+現在はOpenCVのHaar Cascadeで顔を検出していますが、暗所・横顔・斜め顔・小さな顔の検出精度が不足しています。
 
-確認コマンド：
+今後、以下の検出方式を切り替えて比較できる構成にしたいです。
 
-python3 --version
-lsusb
+・Haar Cascade
+・OpenCV YuNet
+・将来的にはMediaPipe
+・将来的にはInsightFaceまたはONNX形式の軽量モデル
 
-lsusb でBUFFALOやWeb Cameraっぽい表示が出ればOKです。
+動作環境は以下です。
 
-Phase 5-2：必要パッケージ導入
+・Raspberry Pi 3 A+
+・Python
+・OpenCV
+・USB WebカメラまたはスマホIPカメラ
+・GUIなしのヘッドレス環境
+・検出結果は画像保存とターミナルログで確認
+・処理負荷をできるだけ軽くする必要がある
 
-Raspberry Piで実行します。
+以下を実装してください。
 
-sudo apt update
-sudo apt install -y python3-opencv python3-pip v4l-utils
+1. config.pyのFACE_DETECTOR_MODEで検出方式を切り替えられるようにする
+2. FACE_DETECTOR_MODE = "haar" または "yunet" を選べるようにする
+3. detector.pyを作り、検出方式の違いを追従処理側から隠す
+4. どの検出方式でも、戻り値をx, y, w, h, confidenceの共通形式にする
+5. 検出された複数の顔からメインターゲットを選ぶ共通処理を作る
+6. モデルやCascadeが読み込めない場合のエラー処理を入れる
+7. 処理時間を計測し、1フレームごとの推論時間をログ表示する
+8. Haar版の既存処理を壊さずに残す
+9. YuNetモデルが未配置の場合は、分かりやすいエラーを表示する
+10. 将来的にMediaPipeやInsightFaceを追加しやすい設計にする
 
-カメラ確認用：
+新しいフォルダ構成、config.pyの追加部分、detector.pyの全文、検出方式を確認するdetector_test.pyの全文を提示してください。
 
-v4l2-ctl --list-devices
+Raspberry Pi 3 A+で動かすため、不要なクラス階層や重い処理は避け、初心者でも理解できる構成にしてください。
 
-ここで /dev/video0 が出れば、Webカメラが認識されています。
+実行手順、結果画像の確認方法、処理速度の見方、HaarとYuNetを切り替える方法も説明してください。
 
-Phase 5-3：フォルダ作成
+最後に、Phase 5.10用として「ファイル準備」「検出器実装」「方式切り替え」「速度比較」「完了判定」の5区分に分けたチェックリストを必ず生成してください。
+Phase 5.11：YuNet顔検出テスト
+Presentation EscortのPhase 5.11「OpenCV YuNet顔検出テスト」を実装します。
 
-今の確定構成に合わせて、Raspberry Pi側はこうします。
+現在はHaar Cascadeによる顔検出まで完成しています。次はOpenCV YuNetを使い、Haarより検出精度が改善するか確認します。
 
-PresentationEscort/
-├── raspberry_pi/
-│   ├── main.py
-│   ├── camera.py
-│   ├── detector.py
-│   ├── tracker.py
-│   ├── follow_controller.py
-│   ├── serial_sender.py
-│   ├── config.py
-│   └── command.py
+動作環境は以下です。
 
-まず作るのは最小構成だけです。
+・Raspberry Pi 3 A+
+・Python
+・OpenCV
+・USB WebカメラとスマホIPカメラの両方に対応
+・GUIなしのヘッドレス環境
+・結果はyunet_face_test.jpgへ保存
+・顔の中心座標と検出枠の大きさを追従制御に利用予定
 
-raspberry_pi/
-├── camera_test.py
-├── config.py
+対象とする条件は以下です。
+
+・暗めの室内
+・正面顔
+・横に近い顔
+・斜め顔
+・斜め下から見た顔
+・小さく写る顔
+・顔が画面の端にある状態
+
+以下を実装してください。
+
+1. OpenCV FaceDetectorYNを使う
+2. YuNetのONNXモデルパスをconfig.pyで設定する
+3. USBカメラとIPカメラの両方に対応する
+4. 取得画像の実際の幅と高さをYuNetへ設定する
+5. confidence threshold、NMS threshold、top_kをconfig.pyで変更可能にする
+6. 検出した全顔を画像へ描画する
+7.最も大きい顔をメインターゲットとして強調表示する
+8. 顔の中心座標、幅、高さ、confidenceをターミナルへ表示する
+9. YuNetの推論時間をミリ秒で表示する
+10. 顔を検出できなかった場合も結果画像を保存する
+11. Haar版と比較しやすいログ形式にする
+12. Raspberry Pi 3 A+で負荷を下げるため、入力解像度を設定可能にする
+
+config.pyに追加する設定と、yunet_face_test.pyの完全なコードを提示してください。
+
+モデルファイルをどこへ置くか、実行コマンド、検出できない場合の調整方法、OpenCVのバージョンによってFaceDetectorYNが利用できない場合の確認方法も説明してください。
+
+最後に、Phase 5.11用として「モデル準備」「環境確認」「正面顔テスト」「角度・暗所テスト」「Haar比較」「完了判定」の6区分に分けたチェックリストを必ず生成してください。
+Phase 5.12：YuNet版追従ループ統合
+Presentation EscortのPhase 5.12「YuNet版Advanced Follow Loop」を実装します。
+
+Phase 5.11でOpenCV YuNetによる顔検出が成功している前提です。
+
+現在の追従機能は以下です。
+
+・顔の中心X座標からLEFT / RIGHT / STOPを判定
+・顔の中心Y座標からHEAD_UP / HEAD_DOWN / HEAD_CENTERを判定
+・顔の検出幅からFAR / GOOD / NEARを判定
+・顔が中央かつFARの場合にFORWARD
+・Raspberry PiからESP32へ115200bpsでシリアル送信
+・同じコマンドの連続送信を抑制
+・終了時にSTOPとHEAD_CENTERを送信
+
+使用可能なESP32コマンドは以下です。
+
+・LEFT
+・RIGHT
+・FORWARD
+・STOP
+・HEAD_UP
+・HEAD_DOWN
+・HEAD_CENTER
+
+以下を実装してください。
+
+1. Haar Cascadeの代わりにYuNetで顔を検出する
+2. FACE_DETECTOR_MODEでHaarとYuNetを切り替えられるようにする
+3. YuNetが返した顔情報をx, y, w, h, confidenceへ変換する
+4. confidenceが低い検出結果を除外する
+5. 複数人がいる場合は基本的に最も大きな顔を追従する
+6. 前回追従していた顔に近い顔を優先する仕組みも追加する
+7. 左右・上下・距離判定を連続処理する
+8. LEFT / RIGHTで向きを合わせた後にFORWARDを実行する
+9. NEARの場合は必ずSTOPする
+10. 顔を見失った場合は一定回数待ってからSTOPする
+11. 判定結果と推論時間を最新画像へ描画する
+12. 最新画像をadvanced_follow_loop_latest.jpgとして保存する
+13. Ctrl+C終了時や例外発生時にSTOPとHEAD_CENTERを送る
+14. Raspberry Pi 3 A+で処理落ちしにくいようにする
+
+config.pyの必要な設定、detector.pyの必要な修正、advanced_follow_loop.pyの完全なコードを提示してください。
+
+コードをファイル単位で省略せず提示し、実行手順、調整値、ログの確認方法、Haarへ戻す方法も説明してください。
+
+最後に、Phase 5.12用として「検出器接続」「座標判定」「シリアル送信」「連続追従」「Haar比較」「完了判定」の6区分に分けたチェックリストを必ず生成してください。
+Phase 5.13：追従動作の安全化・安定化
+Presentation EscortのPhase 5.13「追従動作の安全化・安定化」を実装します。
+
+現在、Raspberry Piの顔検出結果からESP32へ以下の命令を送っています。
+
+・LEFT
+・RIGHT
+・FORWARD
+・STOP
+・HEAD_UP
+・HEAD_DOWN
+・HEAD_CENTER
+
+二足歩行ロボットなので、検出結果が一瞬変化しただけで命令を切り替えると、転倒・振動・意図しない前進が発生する可能性があります。
+
+以下の安全機能を実装してください。
+
+1. 同じ判定が指定回数連続した場合のみコマンドを確定する
+2. LEFTとRIGHTを直接切り替えず、一度STOPを挟む
+3. FORWARDを実行する前に顔が中央範囲内か確認する
+4. FORWARDを連続実行できる最大回数を設定する
+5. FORWARD実行後は一定時間STOPするクールダウンを追加する
+6. 顔がNEARの場合は即座にSTOPする
+7. 顔を見失った場合は短い猶予後にSTOPする
+8. シリアル通信が切れた場合は安全終了する
+9. カメラ取得に失敗した場合はSTOPを送る
+10. Ctrl+C、例外、通常終了のすべてでSTOPとHEAD_CENTERを送る
+11. ロボットの状態をIDLE / TURNING / MOVING_FORWARD / LOST_TARGET / EMERGENCY_STOPとして管理する
+12. EMERGENCY_STOPを手動で有効化できる設定を作る
+13. 1回の実行時間またはループ回数に上限を設定する
+14. 状態遷移とコマンド送信理由をログへ出す
+
+既存のadvanced_follow_loop.pyを安全化する形で、config.pyの追加設定とsafe_follow_loop.pyの完全なコードを提示してください。
+
+安全機能を一つずつテストする方法と、実機テスト前にサーボ電源を切った状態で確認する手順も説明してください。
+
+最後に、Phase 5.13用として「机上確認」「サーボ電源OFF確認」「低速実機確認」「異常時確認」「安全終了確認」「完了判定」の6区分に分けたチェックリストを必ず生成してください。
+Phase 6：発表用デモモード
+Presentation EscortのPhase 6「発表用デモモード」を実装します。
+
+現在、顔検出、左右追従、頭の上下追従、顔サイズによる距離判定、ESP32へのシリアル送信まで完成しています。
+
+発表中に安全かつ分かりやすく動作を見せるため、デモ専用モードを作りたいです。
+
+以下を実装してください。
+
+1. config.pyでDEMO_MODEを有効・無効にできるようにする
+2. デモモードでは処理速度とロボットの動作速度を安全側に制限する
+3. 実行開始時に数秒間のカウントダウンを表示する
+4. 顔検出開始、ターゲット発見、左右調整、前進、停止などの状態をログ表示する
+5. 最大実行時間または最大ループ回数を設定する
+6. 前進回数を制限する
+7. デモ中に顔を見失った場合はSTOPする
+8. デモ終了時にSTOP、HEAD_CENTER、LIGHT_OFFを送る
+9. ライトをデモ開始時にONにできる設定を追加する
+10. デモ結果の最新画像を保存する
+11. 実行結果をテキストログとして保存する
+12. DRY_RUNモードを用意し、ESP32へ送らず判定だけ確認できるようにする
+13. 発表者が説明しやすいようにログを簡潔にする
+
+demo_follow.py、config.pyの追加設定、必要に応じたlogger.pyを完全なコードで提示してください。
+
+発表当日の起動コマンド、終了方法、トラブル時の復旧方法、デモ前確認手順も説明してください。
+
+最後に、Phase 6用として「前日準備」「起動前確認」「デモ開始」「デモ中確認」「安全終了」「発表後確認」の6区分に分けたチェックリストを必ず生成してください。
+Phase 7：OLEDステータス表示
+Presentation EscortのPhase 7「OLEDステータス表示」を実装します。
+
+使用機器は以下です。
+
+・ESP32-WROOM-32
+・PCA9685
+・WaveShare 0.96inch OLED Module
+・PCA9685とOLEDはI2C接続予定
+・ESP32のSDAはGPIO21
+・ESP32のSCLはGPIO22
+・PCA9685のI2Cアドレスは0x40
+・OLEDは0x3Cまたは0x3Dの可能性がある
+
+現在ESP32が管理している状態は以下です。
+
+・歩行状態
+・最後に受信したコマンド
+・頭サーボの上下左右状態
+・ライトON / OFF
+・MANUAL / FOLLOWなどのモード
+・シリアル通信状態
+
+OLEDへ以下のような情報を表示したいです。
+
+Presentation Escort
+MODE: FOLLOW
+FACE: FOUND
+MOVE: FORWARD
+HEAD: UP
+LIGHT: ON
+
+以下を実装してください。
+
+1. I2CスキャナでOLEDのアドレスを確認する手順を作る
+2. PCA9685とOLEDを同じI2Cバスへ並列接続する
+3. PlatformIOのlib_depsに必要なOLEDライブラリを追加する
+4. oled_display.hとoled_display.cppを作る
+5. OLED初期化失敗時もロボット本体は動作を継続できるようにする
+6. 状態が変化したときだけ画面を更新する
+7. 更新頻度を制限し、歩行処理を妨げないようにする
+8. FOLLOW、MANUAL、FACE FOUND、FACE LOSTなどを表示できるようにする
+9. MOVE、HEAD、LIGHTの状態を表示する
+10. main.cppとserial_receive.cppへ統合する
+11. OLEDなしでもビルドできる設定を追加する
+12. 既存のPCA9685制御を壊さないようにする
+
+platformio.ini、config.h、oled_display.h、oled_display.cpp、main.cpp、serial_receive.cppの必要なコードをファイルごとに提示してください。
+
+配線図をテキスト形式で示し、VCC電圧、GND共通、I2Cアドレス重複の確認方法も説明してください。
+
+最後に、Phase 7用として「配線確認」「I2C確認」「単体表示」「既存機能統合」「長時間動作」「完了判定」の6区分に分けたチェックリストを必ず生成してください。
+Phase 8：独自軽量AIモデル
+Presentation EscortのPhase 8「独自軽量顔検出AIモデル」を計画・実装します。
+
+目的は、事前学習済みモデルで苦手だった以下の環境へ対応することです。
+
+・暗めの室内
+・正面顔
+・横顔
+・斜め顔
+・ロボットの低いカメラ位置から斜め下に見た顔
+・遠くにある小さな顔
+・顔が画面端にある状態
+・ライトが当たった顔
+・背景に人や物が多い状態
+
+開発環境は以下です。
+
+【学習側】
+・GPU性能の高いWindows PC
+・Python
+・学習とモデル変換をPCで実行
+
+【推論側】
+・Raspberry Pi 3 A+
+・USB Webカメラ
+・CPU推論
+・できるだけ軽いモデルが必要
+・最終的にONNXまたはTFLite形式を想定
+
+以下のロードマップを作成してください。
+
+1. 独自モデルを作る必要性の判断基準
+2. 必要な撮影条件と撮影枚数
+3. 動画から一定間隔で画像を抽出する方法
+4. train / validation / testの分割方法
+5. 顔のバウンディングボックスを付けるラベル付け方法
+6. データの重複と似た画像の偏りを防ぐ方法
+7. 暗所、ノイズ、明るさ、縮小などのデータ拡張
+8. 軽量な物体検出モデルの候補
+9. PCでの学習方法
+10. 過学習の確認方法
+11. precision、recall、mAPなどの評価方法
+12. ONNXまたはTFLiteへの変換方法
+13. Raspberry Pi 3 A+での推論速度測定
+14. Haar、YuNet、独自モデルの比較方法
+15. 独自モデルをdetector.pyへ追加する方法
+16. 性能が不足した場合にYuNetへ戻せる設計
+17. 個人の顔画像を扱う際のプライバシー上の注意
+
+最初に、モデル開発全体を以下の小フェーズへ分割してください。
+
+・Phase 8.1 データ収集
+・Phase 8.2 ラベル付け
+・Phase 8.3 学習環境構築
+・Phase 8.4 ベースライン学習
+・Phase 8.5 評価と改善
+・Phase 8.6 軽量形式への変換
+・Phase 8.7 Raspberry Pi実装
+・Phase 8.8 既存モデルとの比較
+
+各小フェーズについて、目標、入力、成果物、作業手順、失敗時の戻り先を示してください。
+
+また、実装を始める最初の段階として、データセットの推奨フォルダ構成、撮影計画表、ラベル付け規則、学習前の品質確認方法を具体的に提示してください。
+
+最後に、Phase 8全体用として「データ収集」「ラベル付け」「学習」「評価」「変換」「Raspberry Pi実装」「比較」「完了判定」の8区分に分けたチェックリストを必ず生成してください。

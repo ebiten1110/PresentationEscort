@@ -1,97 +1,99 @@
-# PresentationEscort Raspberry Pi Config
-
-# "usb" または "ip"
 CAMERA_MODE = "usb"
-
-# スマホIPカメラ用
 IP_CAMERA_URL = "http://192.168.x.x:8080/video"
-
-# USB Webカメラ用
 CAMERA_INDEX = 0
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 
-SHOW_WINDOW = False
-
-SAVE_TEST_IMAGE = True
-SAVE_IMAGE_PATH = "camera_test.jpg"
-
-# 顔検出結果の保存先
-FACE_DETECT_IMAGE_PATH = "face_detect_test.jpg"
-
-# 顔位置判定結果の保存先
-FACE_POSITION_IMAGE_PATH = "face_position_test.jpg"
-
-# 中央判定の許容範囲
-CENTER_TOLERANCE_X = 80
-
-# ESP32 Serial
 SERIAL_PORT = "/dev/ttyUSB0"
 SERIAL_BAUD = 115200
 SERIAL_TIMEOUT = 1.0
 
-# Phase 5.5 Follow Test
-FOLLOW_TEST_IMAGE_PATH = "follow_test.jpg"
+# ============================================================
+# Phase 5.9 追従ロジック調整
+# ============================================================
 
-# 顔が見つからなかったときに送る命令
-NO_FACE_COMMAND = "STOP"
+# ---------- 判定基準 ----------
 
-# 連続送信前の安全設定
+# 顔の中心X座標が、画面中央から何px以内なら「中央」とみなすか
+# 小さくするとLEFT / RIGHTが出やすくなる
+CENTER_TOLERANCE_X = 45
+
+# 顔の中心Y座標が、画面中央から何px以内ならHEAD_CENTERとするか
+CENTER_TOLERANCE_Y = 50
+
+# カメラ取り付け位置のずれ補正
+# 正の値：論理上の中心を右へ移動し、LEFTを出やすくする
+# 負の値：論理上の中心を左へ移動し、RIGHTを出やすくする
+CAMERA_CENTER_OFFSET_X = 0
+CAMERA_CENTER_OFFSET_Y = 0
+
+# 左右・上下判定のヒステリシス幅
+# 判定境界付近で命令が往復するのを防ぐ
+X_HYSTERESIS = 15
+Y_HYSTERESIS = 15
+
+# 顔の検出幅による距離判定
+# 顔幅がこの値より小さい場合はFAR
+FACE_FAR_WIDTH = 140
+
+# 顔幅がこの値より大きい場合はNEAR
+FACE_NEAR_WIDTH = 230
+
+# 距離判定のヒステリシス幅
+DISTANCE_HYSTERESIS = 12
+
+
+# ---------- 判定確定 ----------
+
+# LEFT / RIGHT / FORWARDがこの回数連続したら確定する
+MOVE_CONFIRM_FRAMES = 2
+
+# STOPがこの回数連続したら確定する
+# NEARや顔ロスト時の安全停止は、この値を待たず即時確定する
+STOP_CONFIRM_FRAMES = 2
+
+# 頭コマンドがこの回数連続したら確定する
+HEAD_CONFIRM_FRAMES = 2
+
+# 顔をこの回数連続で見失ったらSTOPする
+ADVANCED_NO_FACE_STOP_THRESHOLD = 3
+
+
+# ---------- コマンド送信 ----------
+
+# 同じコマンドを毎ループ送らず、変化時または再送間隔経過時に送る
+ADVANCED_SEND_ONLY_ON_CHANGE = True
+
+# LEFT / RIGHT / FORWARDを再送する間隔
+# ESP32側の旋回・前進が一回動作の場合、同じ命令を定期的に再送する
+MOVE_REPEAT_INTERVAL = 1.2
+
+SEND_MOVE_COMMAND = True
+SEND_HEAD_COMMAND = True
 SEND_COMMAND_TO_ESP32 = True
 
-# Phase 5.6 Follow Loop
-FOLLOW_LOOP_IMAGE_PATH = "follow_loop_latest.jpg"
+# ロボットが判定と逆方向へ動く場合はTrue
+INVERT_HORIZONTAL_COMMANDS = False
 
-# 追従ループ間隔 秒
-FOLLOW_LOOP_INTERVAL = 1.0
 
-# 最大ループ回数
-# None にすると無限ループ
-FOLLOW_LOOP_MAX_COUNT = 20
+# ---------- ループ ----------
 
-# 同じコマンドを連続送信しない
-SEND_ONLY_ON_CHANGE = True
+# 追従判定の実行間隔
+ADVANCED_FOLLOW_LOOP_INTERVAL = 0.35
 
-# 顔が見つからない連続回数がこの数を超えたらSTOP送信
-NO_FACE_STOP_THRESHOLD = 5
+# Noneなら手動停止まで無限実行
+# 最初の確認では30程度を推奨
+ADVANCED_FOLLOW_LOOP_MAX_COUNT = 30
 
-# Phase 5.7 Advanced Follow
 
-# 左右の中央許容範囲
-CENTER_TOLERANCE_X = 80
-
-# 上下の中央許容範囲
-CENTER_TOLERANCE_Y = 60
-
-# 顔サイズによる距離判定
-# 顔の幅がこれより小さいなら遠い
-FACE_FAR_WIDTH = 80
-
-# 顔の幅がこれより大きいなら近い
-FACE_NEAR_WIDTH = 180
-
-# 距離判定結果画像
-ADVANCED_FOLLOW_IMAGE_PATH = "advanced_follow_test.jpg"
-# Phase 5.8 Advanced Follow Loop
+# ---------- 画像・検出 ----------
 
 ADVANCED_FOLLOW_LOOP_IMAGE_PATH = "advanced_follow_loop_latest.jpg"
 
-# 追従ループ間隔 秒
-ADVANCED_FOLLOW_LOOP_INTERVAL = 1.0
+# SDカードへの書き込み負荷を下げる
+SAVE_RESULT_IMAGE = True
+SAVE_RESULT_EVERY_N_LOOPS = 5
 
-# 最大ループ回数
-# None にすると無限ループ
-ADVANCED_FOLLOW_LOOP_MAX_COUNT = 40
-
-# 同じ命令を連続送信しない
-ADVANCED_SEND_ONLY_ON_CHANGE = True
-
-# 顔が見つからない状態が続いたらSTOPする回数
-ADVANCED_NO_FACE_STOP_THRESHOLD = 5
-
-# 頭コマンドも送信するか
-SEND_HEAD_COMMAND = True
-
-# 歩行コマンドも送信するか
-SEND_MOVE_COMMAND = True
+# 暗めの画像に対してコントラストを補正する
+ENABLE_HISTOGRAM_EQUALIZATION = True
