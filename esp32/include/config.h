@@ -29,20 +29,6 @@
 #define CH_RIGHT_HIP  15  // R1 右腰
 #define CH_RIGHT_LEG  14  // R2 右足
 
-// ---------- 頭用サーボ ----------
-#define CH_HEAD_YAW    2   // 横軸：左右
-#define CH_HEAD_PITCH  3   // 縦軸：上下
-
-// ---------- 頭サーボ角度 ----------
-// 横軸：左右が逆だったため LEFT/RIGHT を反転
-#define HEAD_YAW_CENTER_ANGLE     0
-#define HEAD_YAW_LEFT_ANGLE      35
-#define HEAD_YAW_RIGHT_ANGLE    -35
-
-// 縦軸：最初は小さめにする
-#define HEAD_PITCH_CENTER_ANGLE   0
-#define HEAD_PITCH_UP_ANGLE     -20
-#define HEAD_PITCH_DOWN_ANGLE    20
 
 // ---------- サーボ角度制限 ----------
 #define SERVO_MIN_ANGLE -90
@@ -75,5 +61,38 @@ static double angleBias[16] = {
 // Phase 1では未使用。
 // 後で手動/追従モード切替に使う。
 #define SWITCH_PIN 26
+
+// ============================================================
+// 頭サーボの滑らか制御
+// ============================================================
+
+// PCA9685の接続チャンネル
+#define HEAD_YAW_CHANNEL       2
+#define HEAD_PITCH_CHANNEL     3
+
+// 中央角度
+#define HEAD_YAW_CENTER_ANGLE      0.0f
+#define HEAD_PITCH_CENTER_ANGLE    0.0f
+
+// 安全な最大可動範囲
+#define HEAD_YAW_MIN_ANGLE       -20.0f
+#define HEAD_YAW_MAX_ANGLE        20.0f
+
+#define HEAD_PITCH_MIN_ANGLE     -12.0f
+#define HEAD_PITCH_MAX_ANGLE      12.0f
+
+// HEAD_UP / HEAD_DOWNを1回受け取ったときに
+// 目標角度を何度変更するか
+#define HEAD_PITCH_NUDGE_ANGLE     1.0f
+
+// サーボを1回の更新で何度動かすか
+#define HEAD_SMOOTH_STEP_ANGLE     0.5f
+
+// サーボ角度を更新する間隔
+#define HEAD_UPDATE_INTERVAL_MS    30
+
+// 実機で上下が逆だった場合は符号を入れ替える
+#define HEAD_PITCH_UP_DIRECTION   -1.0f
+#define HEAD_PITCH_DOWN_DIRECTION  1.0f
 
 #endif

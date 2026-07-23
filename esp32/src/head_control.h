@@ -3,26 +3,49 @@
 
 #include <Arduino.h>
 
-// 頭サーボ制御の初期化
+// ============================================================
+// 初期化・定期更新
+// ============================================================
+
+// 頭サーボを中央位置で初期化する。
 void initHeadControl();
 
-// 横軸：左右
+// loop()から毎回呼ぶ。
+// delay()を使わず、現在角度を目標角度へ徐々に近づける。
+void updateHeadControl();
+
+
+// ============================================================
+// コマンド
+// ============================================================
+
+// 1回呼ばれるたび、目標角度を少しだけ左へ動かす。
 void headLeft();
+
+// 1回呼ばれるたび、目標角度を少しだけ右へ動かす。
 void headRight();
 
-// 縦軸：上下
+// 1回呼ばれるたび、目標角度を少しだけ上へ動かす。
 void headUp();
+
+// 1回呼ばれるたび、目標角度を少しだけ下へ動かす。
 void headDown();
 
-// 横軸・縦軸を中央に戻す
+// 目標角度を中央へ設定する。
+// 実際のサーボはupdateHeadControl()によって徐々に中央へ戻る。
 void headCenter();
 
-// 任意角度に動かす
-void setHeadYawAngle(double angle);
-void setHeadPitchAngle(double angle);
 
-// 現在角度を返す
-double getHeadYawAngle();
-double getHeadPitchAngle();
+// ============================================================
+// 状態取得
+// ============================================================
+
+int getCurrentHeadYaw();
+int getCurrentHeadPitch();
+
+int getTargetHeadYaw();
+int getTargetHeadPitch();
+
+bool isHeadMoving();
 
 #endif
