@@ -63,3 +63,11 @@ SAVE_RESULT_EVERY_N_LOOPS = 5
 
 # 暗所向けコントラスト補正
 ENABLE_HISTOGRAM_EQUALIZATION = True
+
+SAVE_RESULT_IMAGE = True
+
+# 1なら毎ループ保存
+# Raspberry Pi 3 A+では、まず2がおすすめ
+SAVE_RESULT_EVERY_N_LOOPS = 2
+
+ADVANCED_FOLLOW_LOOP_IMAGE_PATH = "advanced_follow_loop_latest.jpg"

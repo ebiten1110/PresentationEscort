@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+  <title>Presentation Escort Camera</title>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      color: #ffffff;
+      background: #111111;
+      font-family: sans-serif;
+      text-align: center;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      font-size: 24px;
+    }
+
+    #status {
+      margin-bottom: 16px;
+      color: #bbbbbb;
+    }
+
+    #camera-image {
+      width: min(960px, 95vw);
+      height: auto;
+      border: 2px solid #555555;
+      border-radius: 8px;
+      background: #222222;
+    }
+
+    .controls {
+      margin-top: 16px;
+    }
+
+    button {
+      padding: 8px 16px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Presentation Escort Camera</h1>
+
+  <div id="status">
+    最新画像を取得中...
+  </div>
+
+  <img
+    id="camera-image"
+    src="advanced_follow_loop_latest.jpg"
+    alt="カメラ画像"
+  >
+
+  <div class="controls">
+    <button id="pause-button">
+      一時停止
+    </button>
+  </div>
+
+  <script>
+    const image = document.getElementById("camera-image");
+    const status = document.getElementById("status");
+    const pauseButton = document.getElementById("pause-button");
+
+    // 更新間隔。300msで約3.3回/秒
+    const refreshIntervalMs = 300;
+
+    let paused = false;
+    let lastSuccessfulUpdate = null;
+
+    function refreshImage() {
+      if (paused) {
+        return;
+      }
+
+      const nextImage = new Image();
+
+      nextImage.onload = () => {
+        image.src = nextImage.src;
+
+        lastSuccessfulUpdate = new Date();
+
+        status.textContent =
+          "最終更新: " +
+          lastSuccessfulUpdate.toLocaleTimeString();
+      };
+
+      nextImage.onerror = () => {
+        status.textContent =
+          "画像を取得できません。追従プログラムを確認してください。";
+      };
+
+      // 時刻をURLにつけてブラウザキャッシュを回避
+      nextImage.src =
+        "advanced_follow_loop_latest.jpg?t=" +
+        Date.now();
+    }
+
+    pauseButton.addEventListener("click", () => {
+      paused = !paused;
+
+      pauseButton.textContent =
+        paused ? "再開" : "一時停止";
+
+      if (!paused) {
+        refreshImage();
+      }
+    });
+
+    refreshImage();
+    setInterval(refreshImage, refreshIntervalMs);
+  </script>
+</body>
+</html>
