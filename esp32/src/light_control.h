@@ -3,19 +3,26 @@
 
 #include <Arduino.h>
 
-// ライト制御の初期化
+
+// ============================================================
+// 白色LED制御
+// ============================================================
+
 void initLightControl();
 
-// ライトON
 void lightOn();
-
-// ライトOFF
 void lightOff();
-
-// ライト切り替え
 void lightToggle();
 
-// 現在ライトが点灯しているか
+// 既存コードとの互換用別名
+void toggleLight();
+void turnLightOn();
+void turnLightOff();
+
+void setLight(bool enabled);
+
 bool isLightOn();
+bool getLightState();
+
 
 #endif

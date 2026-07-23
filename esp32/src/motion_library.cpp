@@ -8,8 +8,7 @@ static const MotionStep standSteps[] = {
   { 0, CH_LEFT_HIP,   0, 300 },
   { 0, CH_LEFT_LEG,   0, 300 },
   { 0, CH_RIGHT_HIP,  0, 300 },
-  { 0, CH_RIGHT_LEG,  0, 300 },
-  { 0, CH_HEAD_YAW,   0, 300 }
+  { 0, CH_RIGHT_LEG,  0, 300 }
 };
 
 static const MotionData standMotion = {

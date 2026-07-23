@@ -3,9 +3,10 @@
 #include "motion_player.h"
 #include "motion_library.h"
 
-// =====================================================
+
+// ============================================================
 // 歩行状態
-// =====================================================
+// ============================================================
 
 enum WalkingState {
   WALK_IDLE,
@@ -25,50 +26,82 @@ static int remainingForwardSteps = 0;
 // 停止要求
 static bool stopRequested = false;
 
-// =====================================================
-// 内部関数
-// =====================================================
 
-static void setWalkingState(WalkingState state) {
+// ============================================================
+// 旋回方向調整
+// ============================================================
+
+// シリアルモニターからLEFTを直接送っても右へ旋回する場合は、
+// trueへ変更する。
+// Python側の映像反転が原因の場合はfalseのままにする。
+static const bool INVERT_TURN_MOTION = false;
+
+
+// ============================================================
+// 内部関数
+// ============================================================
+
+static void setWalkingState(
+  WalkingState state
+) {
   walkingState = state;
 
   Serial.print("[Walking] State: ");
   Serial.println(getWalkingStateName());
 }
 
+
 static void playStandMotion() {
   setWalkingState(WALK_STAND);
   playMotion(getStandMotion());
 }
+
 
 static void playStartWalkMotion() {
   setWalkingState(WALK_START);
   playMotion(getStartWalkMotion());
 }
 
+
 static void playForwardWalkMotion() {
   setWalkingState(WALK_FORWARD);
   playMotion(getForwardWalkMotion());
 }
+
 
 static void playStopWalkMotion() {
   setWalkingState(WALK_STOP);
   playMotion(getStopWalkMotion());
 }
 
+
 static void playTurnLeftMotion() {
   setWalkingState(WALK_TURN_LEFT);
-  playMotion(getTurnLeftMotion());
+
+  if (INVERT_TURN_MOTION) {
+    playMotion(getTurnRightMotion());
+  }
+  else {
+    playMotion(getTurnLeftMotion());
+  }
 }
+
 
 static void playTurnRightMotion() {
   setWalkingState(WALK_TURN_RIGHT);
-  playMotion(getTurnRightMotion());
+
+  if (INVERT_TURN_MOTION) {
+    playMotion(getTurnLeftMotion());
+  }
+  else {
+    playMotion(getTurnRightMotion());
+  }
 }
 
-// =====================================================
+
+// ============================================================
 // 公開関数
-// =====================================================
+// ============================================================
 
 void initWalking() {
   walkingState = WALK_IDLE;
@@ -78,16 +111,15 @@ void initWalking() {
   Serial.println("[Walking] Initialized.");
 }
 
+
 void updateWalking() {
-  // まずMotionPlayerを進める
+  // MotionPlayerはここで1回だけ更新する。
   updateMotionPlayer();
 
-  // モーション再生中なら何もしない
   if (isMotionPlaying()) {
     return;
   }
 
-  // モーションが終わった後の状態遷移
   switch (walkingState) {
     case WALK_STAND:
       setWalkingState(WALK_IDLE);
@@ -96,10 +128,12 @@ void updateWalking() {
     case WALK_START:
       if (stopRequested) {
         playStopWalkMotion();
-      } else if (remainingForwardSteps > 0) {
+      }
+      else if (remainingForwardSteps > 0) {
         remainingForwardSteps--;
         playForwardWalkMotion();
-      } else {
+      }
+      else {
         playStopWalkMotion();
       }
       break;
@@ -107,10 +141,12 @@ void updateWalking() {
     case WALK_FORWARD:
       if (stopRequested) {
         playStopWalkMotion();
-      } else if (remainingForwardSteps > 0) {
+      }
+      else if (remainingForwardSteps > 0) {
         remainingForwardSteps--;
         playForwardWalkMotion();
-      } else {
+      }
+      else {
         playStopWalkMotion();
       }
       break;
@@ -135,9 +171,12 @@ void updateWalking() {
   }
 }
 
+
 void stand() {
   if (isMotionPlaying()) {
-    Serial.println("[Walking] Busy. Cannot stand now.");
+    Serial.println(
+      "[Walking] Busy. Cannot stand now."
+    );
     return;
   }
 
@@ -147,56 +186,84 @@ void stand() {
   playStandMotion();
 }
 
+
 void walkForwardSteps(int steps) {
   if (steps <= 0) {
-    Serial.println("[Walking] steps must be greater than 0.");
+    Serial.println(
+      "[Walking] steps must be greater than 0."
+    );
     return;
   }
 
-  if (isMotionPlaying() || walkingState != WALK_IDLE) {
-    Serial.println("[Walking] Busy. Cannot start walking.");
+  if (
+    isMotionPlaying()
+    || walkingState != WALK_IDLE
+  ) {
+    Serial.println(
+      "[Walking] Busy. Cannot start walking."
+    );
     return;
   }
 
   stopRequested = false;
 
-  // START_WALK が1歩目に相当するので、
-  // 残り歩数は steps - 1 にする
+  // START_WALKが1歩目に相当する。
   remainingForwardSteps = steps - 1;
 
-  Serial.print("[Walking] Walk forward steps: ");
+  Serial.print(
+    "[Walking] Walk forward steps: "
+  );
   Serial.println(steps);
 
   playStartWalkMotion();
 }
 
+
 void walkForwardOnce() {
   walkForwardSteps(1);
 }
 
+
 void stopWalking() {
   Serial.println("[Walking] Stop requested.");
 
-  // 再生中なら、今のモーションが終わった後にSTOPへ行く
+  // すでに停止中・待機中なら、
+  // 長いSTOP_WALKモーションを新しく開始しない。
+  if (
+    !isMotionPlaying()
+    && walkingState == WALK_IDLE
+  ) {
+    stopRequested = false;
+    remainingForwardSteps = 0;
+
+    Serial.println(
+      "[Walking] Already idle."
+    );
+    return;
+  }
+
+  // 再生中なら、現在モーション終了後に停止する。
   if (isMotionPlaying()) {
     stopRequested = true;
     remainingForwardSteps = 0;
     return;
   }
 
-  // 止まっているなら停止モーションだけ再生
-  if (walkingState == WALK_IDLE) {
-    playStopWalkMotion();
-    return;
-  }
-
+  // IDLE以外でモーションが止まっている場合。
   stopRequested = true;
   remainingForwardSteps = 0;
+  playStopWalkMotion();
 }
 
+
 void turnLeft() {
-  if (isMotionPlaying() || walkingState != WALK_IDLE) {
-    Serial.println("[Walking] Busy. Cannot turn left.");
+  if (
+    isMotionPlaying()
+    || walkingState != WALK_IDLE
+  ) {
+    Serial.println(
+      "[Walking] Busy. Cannot turn left."
+    );
     return;
   }
 
@@ -206,9 +273,15 @@ void turnLeft() {
   playTurnLeftMotion();
 }
 
+
 void turnRight() {
-  if (isMotionPlaying() || walkingState != WALK_IDLE) {
-    Serial.println("[Walking] Busy. Cannot turn right.");
+  if (
+    isMotionPlaying()
+    || walkingState != WALK_IDLE
+  ) {
+    Serial.println(
+      "[Walking] Busy. Cannot turn right."
+    );
     return;
   }
 
@@ -218,9 +291,14 @@ void turnRight() {
   playTurnRightMotion();
 }
 
+
 bool isWalkingBusy() {
-  return isMotionPlaying() || walkingState != WALK_IDLE;
+  return (
+    isMotionPlaying()
+    || walkingState != WALK_IDLE
+  );
 }
+
 
 const char* getWalkingStateName() {
   switch (walkingState) {

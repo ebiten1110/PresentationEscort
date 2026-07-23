@@ -5,10 +5,20 @@
 
 #include "config.h"
 
-// PCA9685インスタンス
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDRESS);
 
-// 角度を安全範囲に制限する
+// ============================================================
+// PCA9685
+// ============================================================
+
+Adafruit_PWMServoDriver pwm = (
+  Adafruit_PWMServoDriver(PCA9685_ADDRESS)
+);
+
+
+// ============================================================
+// 内部関数
+// ============================================================
+
 static double clampAngle(double angle) {
   if (angle < SERVO_MIN_ANGLE) {
     return SERVO_MIN_ANGLE;
@@ -21,14 +31,24 @@ static double clampAngle(double angle) {
   return angle;
 }
 
-// 角度をPCA9685のPWM値に変換する
+
 static int angleToDuty(double angle) {
   angle = clampAngle(angle);
 
-  double dutyRatio =
-    DUTY_MIN + ((angle + 90.0) / 180.0) * (DUTY_MAX - DUTY_MIN);
+  const double dutyRatio =
+    DUTY_MIN
+    + (
+      (angle + 90.0)
+      / 180.0
+    )
+    * (
+      DUTY_MAX
+      - DUTY_MIN
+    );
 
-  int duty = (int)(dutyRatio * 4096.0);
+  int duty = static_cast<int>(
+    dutyRatio * 4096.0
+  );
 
   if (duty < 0) {
     duty = 0;
@@ -41,7 +61,11 @@ static int angleToDuty(double angle) {
   return duty;
 }
 
-// PCA9685とサーボ制御の初期化
+
+// ============================================================
+// 初期化
+// ============================================================
+
 void initServoControl() {
   Wire.begin();
 
@@ -51,49 +75,90 @@ void initServoControl() {
   delay(10);
 
   centerAllServos();
+
+  Serial.println("[Servo] Initialized.");
 }
 
-// 指定チャンネルのサーボを指定角度へ動かす
-void setServoAngle(int ch, double angle) {
+
+// ============================================================
+// 基本サーボ制御
+// ============================================================
+
+void setServoAngle(
+  int ch,
+  double angle
+) {
   if (ch < 0 || ch > 15) {
     Serial.print("[Servo] Invalid channel: ");
     Serial.println(ch);
     return;
   }
 
-  double correctedAngle = angle + angleBias[ch];
-  correctedAngle = clampAngle(correctedAngle);
+  const double correctedAngle = clampAngle(
+    angle + angleBias[ch]
+  );
 
-  int duty = angleToDuty(correctedAngle);
+  const int duty = angleToDuty(
+    correctedAngle
+  );
 
-  pwm.setPWM(ch, 0, duty);
+  pwm.setPWM(
+    ch,
+    0,
+    duty
+  );
 
-  Serial.print("[Servo] CH=");
-  Serial.print(ch);
-  Serial.print(" angle=");
-  Serial.print(angle);
-  Serial.print(" bias=");
-  Serial.print(angleBias[ch]);
-  Serial.print(" corrected=");
-  Serial.print(correctedAngle);
-  Serial.print(" duty=");
-  Serial.println(duty);
+  if (SERVO_DEBUG_LOG) {
+    Serial.print("[Servo] CH=");
+    Serial.print(ch);
+
+    Serial.print(" angle=");
+    Serial.print(angle, 2);
+
+    Serial.print(" bias=");
+    Serial.print(angleBias[ch], 2);
+
+    Serial.print(" corrected=");
+    Serial.print(correctedAngle, 2);
+
+    Serial.print(" duty=");
+    Serial.println(duty);
+  }
 }
 
-// 下半身4サーボをまとめて動かす
+
+// ============================================================
+// 下半身
+// ============================================================
+
 void setLegPose(
   double leftHip,
   double leftLeg,
   double rightHip,
   double rightLeg
 ) {
-  setServoAngle(CH_LEFT_HIP, leftHip);
-  setServoAngle(CH_LEFT_LEG, leftLeg);
-  setServoAngle(CH_RIGHT_HIP, rightHip);
-  setServoAngle(CH_RIGHT_LEG, rightLeg);
+  setServoAngle(
+    CH_LEFT_HIP,
+    leftHip
+  );
+
+  setServoAngle(
+    CH_LEFT_LEG,
+    leftLeg
+  );
+
+  setServoAngle(
+    CH_RIGHT_HIP,
+    rightHip
+  );
+
+  setServoAngle(
+    CH_RIGHT_LEG,
+    rightLeg
+  );
 }
 
-// 4つの下半身サーボを0度にする
+
 void centerLegServos() {
   setLegPose(
     STAND_ANGLE_LEFT_HIP,
@@ -103,37 +168,79 @@ void centerLegServos() {
   );
 }
 
-// 頭サーボを動かす
+
+// ============================================================
+// 頭
+// ============================================================
+
 void setHeadYaw(double angle) {
-  setServoAngle(CH_HEAD_YAW, angle);
+  setServoAngle(
+    CH_HEAD_YAW,
+    angle
+  );
 }
 
-// 頭サーボを0度にする
+
+void setHeadPitch(double angle) {
+  setServoAngle(
+    CH_HEAD_PITCH,
+    angle
+  );
+}
+
+
+void centerHeadServos() {
+  setHeadYaw(
+    STAND_ANGLE_HEAD_YAW
+  );
+
+  setHeadPitch(
+    STAND_ANGLE_HEAD_PITCH
+  );
+}
+
+
 void centerHeadServo() {
-  setHeadYaw(STAND_ANGLE_HEAD_YAW);
+  centerHeadServos();
 }
 
-// 全サーボを初期姿勢にする
+
+// ============================================================
+// 全サーボ
+// ============================================================
+
 void centerAllServos() {
   centerLegServos();
-  centerHeadServo();
+  centerHeadServos();
 }
 
-// 指定サーボのPWM出力を停止する
+
+// ============================================================
+// PWM出力停止
+// ============================================================
+
 void stopServo(int ch) {
   if (ch < 0 || ch > 15) {
-    Serial.print("[Servo] Invalid stop channel: ");
+    Serial.print(
+      "[Servo] Invalid stop channel: "
+    );
     Serial.println(ch);
     return;
   }
 
-  pwm.setPWM(ch, 0, 0);
+  pwm.setPWM(
+    ch,
+    0,
+    0
+  );
 
-  Serial.print("[Servo] Stop CH=");
-  Serial.println(ch);
+  if (SERVO_DEBUG_LOG) {
+    Serial.print("[Servo] Stop CH=");
+    Serial.println(ch);
+  }
 }
 
-// 全サーボ出力を停止する
+
 void stopAllServos() {
   for (int ch = 0; ch < 16; ch++) {
     stopServo(ch);

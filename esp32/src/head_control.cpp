@@ -2,78 +2,24 @@
 
 #include "head_control.h"
 #include "servo_control.h"
-
-
-// ============================================================
-// 頭サーボ設定
-// ============================================================
-
-// PCA9685チャンネル
-// 水平サーボ
-static const uint8_t HEAD_YAW_CHANNEL = 2;
-
-// 上下サーボ
-static const uint8_t HEAD_PITCH_CHANNEL = 3;
-
-
-// 中央角度
-static const int HEAD_YAW_CENTER_ANGLE = 0;
-static const int HEAD_PITCH_CENTER_ANGLE = 0;
-
-
-// 安全な可動範囲
-static const int HEAD_YAW_MIN_ANGLE = -20;
-static const int HEAD_YAW_MAX_ANGLE = 20;
-
-static const int HEAD_PITCH_MIN_ANGLE = -12;
-static const int HEAD_PITCH_MAX_ANGLE = 12;
-
-
-// ============================================================
-// 1回のコマンドで動かす目標角度
-// ============================================================
-
-// HEAD_LEFT / HEAD_RIGHTを1回受信するごとに1度変更
-static const int HEAD_YAW_NUDGE_ANGLE = 1;
-
-// HEAD_UP / HEAD_DOWNを1回受信するごとに1度変更
-static const int HEAD_PITCH_NUDGE_ANGLE = 1;
-
-
-// ============================================================
-// 滑らかなサーボ移動
-// ============================================================
-
-// 1回の更新で実際のサーボ角度を1度だけ変更
-static const int HEAD_SMOOTH_STEP_ANGLE = 1;
-
-// 1度動かす間隔
-// 50msなら、最大で1秒に20度動く
-static const unsigned long HEAD_UPDATE_INTERVAL_MS = 50;
-
-
-// ============================================================
-// サーボ取り付け方向
-// ============================================================
-
-// 実機で上下が逆の場合は、符号を入れ替える
-static const int HEAD_PITCH_UP_DIRECTION = -1;
-static const int HEAD_PITCH_DOWN_DIRECTION = 1;
-
-// 実機で左右が逆の場合は、符号を入れ替える
-static const int HEAD_YAW_LEFT_DIRECTION = -1;
-static const int HEAD_YAW_RIGHT_DIRECTION = 1;
+#include "config.h"
 
 
 // ============================================================
 // 現在角度・目標角度
 // ============================================================
 
-static int currentYawAngle = HEAD_YAW_CENTER_ANGLE;
-static int targetYawAngle = HEAD_YAW_CENTER_ANGLE;
+static float currentYawAngle =
+  STAND_ANGLE_HEAD_YAW;
 
-static int currentPitchAngle = HEAD_PITCH_CENTER_ANGLE;
-static int targetPitchAngle = HEAD_PITCH_CENTER_ANGLE;
+static float targetYawAngle =
+  STAND_ANGLE_HEAD_YAW;
+
+static float currentPitchAngle =
+  STAND_ANGLE_HEAD_PITCH;
+
+static float targetPitchAngle =
+  STAND_ANGLE_HEAD_PITCH;
 
 static unsigned long lastHeadUpdateTime = 0;
 
@@ -82,56 +28,63 @@ static unsigned long lastHeadUpdateTime = 0;
 // 内部関数
 // ============================================================
 
-static int clampAngle(
-    int value,
-    int minimum,
-    int maximum
+static float clampAngle(
+  float value,
+  float minimum,
+  float maximum
 ) {
-    if (value < minimum) {
-        return minimum;
-    }
+  if (value < minimum) {
+    return minimum;
+  }
 
-    if (value > maximum) {
-        return maximum;
-    }
+  if (value > maximum) {
+    return maximum;
+  }
 
-    return value;
+  return value;
 }
 
 
-static int moveTowardByOneDegree(
-    int currentValue,
-    int targetValue
+static float moveToward(
+  float currentValue,
+  float targetValue
 ) {
-    if (currentValue < targetValue) {
-        return currentValue + 1;
-    }
+  if (currentValue < targetValue) {
+    currentValue += HEAD_SMOOTH_STEP_ANGLE;
 
     if (currentValue > targetValue) {
-        return currentValue - 1;
+      currentValue = targetValue;
     }
+  }
+  else if (currentValue > targetValue) {
+    currentValue -= HEAD_SMOOTH_STEP_ANGLE;
 
-    return currentValue;
+    if (currentValue < targetValue) {
+      currentValue = targetValue;
+    }
+  }
+
+  return currentValue;
 }
 
 
-static void printTargetAngles(
-    const char* action
+static void printHeadState(
+  const char* action
 ) {
-    Serial.print("[Head] ");
-    Serial.print(action);
+  Serial.print("[HeadControl] ");
+  Serial.print(action);
 
-    Serial.print(" currentYaw=");
-    Serial.print(currentYawAngle);
+  Serial.print(" currentYaw=");
+  Serial.print(currentYawAngle, 1);
 
-    Serial.print(" targetYaw=");
-    Serial.print(targetYawAngle);
+  Serial.print(" targetYaw=");
+  Serial.print(targetYawAngle, 1);
 
-    Serial.print(" currentPitch=");
-    Serial.print(currentPitchAngle);
+  Serial.print(" currentPitch=");
+  Serial.print(currentPitchAngle, 1);
 
-    Serial.print(" targetPitch=");
-    Serial.println(targetPitchAngle);
+  Serial.print(" targetPitch=");
+  Serial.println(targetPitchAngle, 1);
 }
 
 
@@ -140,158 +93,173 @@ static void printTargetAngles(
 // ============================================================
 
 void initHeadControl() {
-    currentYawAngle = HEAD_YAW_CENTER_ANGLE;
-    targetYawAngle = HEAD_YAW_CENTER_ANGLE;
+  currentYawAngle =
+    STAND_ANGLE_HEAD_YAW;
 
-    currentPitchAngle = HEAD_PITCH_CENTER_ANGLE;
-    targetPitchAngle = HEAD_PITCH_CENTER_ANGLE;
+  targetYawAngle =
+    STAND_ANGLE_HEAD_YAW;
 
-    setServoAngle(
-        HEAD_YAW_CHANNEL,
-        currentYawAngle
-    );
+  currentPitchAngle =
+    STAND_ANGLE_HEAD_PITCH;
 
-    setServoAngle(
-        HEAD_PITCH_CHANNEL,
-        currentPitchAngle
-    );
+  targetPitchAngle =
+    STAND_ANGLE_HEAD_PITCH;
 
-    lastHeadUpdateTime = millis();
+  setHeadYaw(currentYawAngle);
+  setHeadPitch(currentPitchAngle);
 
-    Serial.println(
-        "[Head] Initialized at center"
-    );
+  lastHeadUpdateTime = millis();
+
+  printHeadState("INITIALIZED");
 }
 
 
 // ============================================================
-// 1度ずつ滑らかに移動
+// 1度ずつ実角度を目標へ近づける
 // ============================================================
 
 void updateHeadControl() {
-    const unsigned long now = millis();
+  const unsigned long now = millis();
 
-    if (
-        now - lastHeadUpdateTime
-        < HEAD_UPDATE_INTERVAL_MS
-    ) {
-        return;
-    }
+  if (
+    now - lastHeadUpdateTime
+    < HEAD_UPDATE_INTERVAL_MS
+  ) {
+    return;
+  }
 
-    lastHeadUpdateTime = now;
+  lastHeadUpdateTime = now;
 
-    const int previousYaw = currentYawAngle;
-    const int previousPitch = currentPitchAngle;
+  const float previousYaw =
+    currentYawAngle;
 
-    // 目標角度へ1度ずつ近づける
-    currentYawAngle = moveTowardByOneDegree(
+  const float previousPitch =
+    currentPitchAngle;
+
+  currentYawAngle = moveToward(
+    currentYawAngle,
+    targetYawAngle
+  );
+
+  currentPitchAngle = moveToward(
+    currentPitchAngle,
+    targetPitchAngle
+  );
+
+  if (currentYawAngle != previousYaw) {
+    setHeadYaw(currentYawAngle);
+
+    if (HEAD_APPLIED_ANGLE_LOG) {
+      Serial.print(
+        "[HeadControl] Applied yaw="
+      );
+      Serial.println(
         currentYawAngle,
-        targetYawAngle
-    );
+        1
+      );
+    }
+  }
 
-    currentPitchAngle = moveTowardByOneDegree(
+  if (currentPitchAngle != previousPitch) {
+    setHeadPitch(currentPitchAngle);
+
+    if (HEAD_APPLIED_ANGLE_LOG) {
+      Serial.print(
+        "[HeadControl] Applied pitch="
+      );
+      Serial.println(
         currentPitchAngle,
-        targetPitchAngle
-    );
-
-    // 角度が変わった場合だけPCA9685へ送信
-    if (currentYawAngle != previousYaw) {
-        setServoAngle(
-            HEAD_YAW_CHANNEL,
-            currentYawAngle
-        );
+        1
+      );
     }
-
-    if (currentPitchAngle != previousPitch) {
-        setServoAngle(
-            HEAD_PITCH_CHANNEL,
-            currentPitchAngle
-        );
-    }
+  }
 }
 
 
 // ============================================================
-// 左右：1回の受信につき目標角度を1度変更
+// 左右：コマンド1回につき目標を1度変更
 // ============================================================
 
 void headLeft() {
-    targetYawAngle += (
-        HEAD_YAW_NUDGE_ANGLE
-        * HEAD_YAW_LEFT_DIRECTION
-    );
+  targetYawAngle += (
+    HEAD_YAW_NUDGE_ANGLE
+    * HEAD_YAW_LEFT_DIRECTION
+  );
 
-    targetYawAngle = clampAngle(
-        targetYawAngle,
-        HEAD_YAW_MIN_ANGLE,
-        HEAD_YAW_MAX_ANGLE
-    );
+  targetYawAngle = clampAngle(
+    targetYawAngle,
+    HEAD_YAW_MIN_ANGLE,
+    HEAD_YAW_MAX_ANGLE
+  );
 
-    printTargetAngles("NUDGE_LEFT_1_DEG");
+  printHeadState("HEAD_LEFT_1_DEG");
 }
 
 
 void headRight() {
-    targetYawAngle += (
-        HEAD_YAW_NUDGE_ANGLE
-        * HEAD_YAW_RIGHT_DIRECTION
-    );
+  targetYawAngle += (
+    HEAD_YAW_NUDGE_ANGLE
+    * HEAD_YAW_RIGHT_DIRECTION
+  );
 
-    targetYawAngle = clampAngle(
-        targetYawAngle,
-        HEAD_YAW_MIN_ANGLE,
-        HEAD_YAW_MAX_ANGLE
-    );
+  targetYawAngle = clampAngle(
+    targetYawAngle,
+    HEAD_YAW_MIN_ANGLE,
+    HEAD_YAW_MAX_ANGLE
+  );
 
-    printTargetAngles("NUDGE_RIGHT_1_DEG");
+  printHeadState("HEAD_RIGHT_1_DEG");
 }
 
 
 // ============================================================
-// 上下：1回の受信につき目標角度を1度変更
+// 上下：コマンド1回につき目標を1度変更
 // ============================================================
 
 void headUp() {
-    targetPitchAngle += (
-        HEAD_PITCH_NUDGE_ANGLE
-        * HEAD_PITCH_UP_DIRECTION
-    );
+  targetPitchAngle += (
+    HEAD_PITCH_NUDGE_ANGLE
+    * HEAD_PITCH_UP_DIRECTION
+  );
 
-    targetPitchAngle = clampAngle(
-        targetPitchAngle,
-        HEAD_PITCH_MIN_ANGLE,
-        HEAD_PITCH_MAX_ANGLE
-    );
+  targetPitchAngle = clampAngle(
+    targetPitchAngle,
+    HEAD_PITCH_MIN_ANGLE,
+    HEAD_PITCH_MAX_ANGLE
+  );
 
-    printTargetAngles("NUDGE_UP_1_DEG");
+  printHeadState("HEAD_UP_1_DEG");
 }
 
 
 void headDown() {
-    targetPitchAngle += (
-        HEAD_PITCH_NUDGE_ANGLE
-        * HEAD_PITCH_DOWN_DIRECTION
-    );
+  targetPitchAngle += (
+    HEAD_PITCH_NUDGE_ANGLE
+    * HEAD_PITCH_DOWN_DIRECTION
+  );
 
-    targetPitchAngle = clampAngle(
-        targetPitchAngle,
-        HEAD_PITCH_MIN_ANGLE,
-        HEAD_PITCH_MAX_ANGLE
-    );
+  targetPitchAngle = clampAngle(
+    targetPitchAngle,
+    HEAD_PITCH_MIN_ANGLE,
+    HEAD_PITCH_MAX_ANGLE
+  );
 
-    printTargetAngles("NUDGE_DOWN_1_DEG");
+  printHeadState("HEAD_DOWN_1_DEG");
 }
 
 
 // ============================================================
-// 中央：目標を0度にして、1度ずつ中央へ戻す
+// 1度ずつ中央へ戻す
 // ============================================================
 
 void headCenter() {
-    targetYawAngle = HEAD_YAW_CENTER_ANGLE;
-    targetPitchAngle = HEAD_PITCH_CENTER_ANGLE;
+  targetYawAngle =
+    STAND_ANGLE_HEAD_YAW;
 
-    printTargetAngles("SMOOTH_CENTER_1_DEG");
+  targetPitchAngle =
+    STAND_ANGLE_HEAD_PITCH;
+
+  printHeadState("HEAD_CENTER_SMOOTH");
 }
 
 
@@ -299,29 +267,29 @@ void headCenter() {
 // 状態取得
 // ============================================================
 
-int getCurrentHeadYaw() {
-    return currentYawAngle;
+float getCurrentHeadYaw() {
+  return currentYawAngle;
 }
 
 
-int getCurrentHeadPitch() {
-    return currentPitchAngle;
+float getCurrentHeadPitch() {
+  return currentPitchAngle;
 }
 
 
-int getTargetHeadYaw() {
-    return targetYawAngle;
+float getTargetHeadYaw() {
+  return targetYawAngle;
 }
 
 
-int getTargetHeadPitch() {
-    return targetPitchAngle;
+float getTargetHeadPitch() {
+  return targetPitchAngle;
 }
 
 
 bool isHeadMoving() {
-    return (
-        currentYawAngle != targetYawAngle
-        || currentPitchAngle != targetPitchAngle
-    );
+  return (
+    currentYawAngle != targetYawAngle
+    || currentPitchAngle != targetPitchAngle
+  );
 }

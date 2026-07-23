@@ -1,65 +1,33 @@
 #include <Arduino.h>
 
-#include "config.h"
-#include "servo_control.h"
-#include "head_control.h"
+#include "light_control.h"
 
 
 // ============================================================
-// 現在角度と目標角度
+// LED設定
 // ============================================================
 
-static float currentYawAngle = HEAD_YAW_CENTER_ANGLE;
-static float targetYawAngle = HEAD_YAW_CENTER_ANGLE;
+// 白色LEDを接続しているESP32のGPIO
+static const uint8_t LIGHT_PIN = 25;
 
-static float currentPitchAngle = HEAD_PITCH_CENTER_ANGLE;
-static float targetPitchAngle = HEAD_PITCH_CENTER_ANGLE;
-
-static unsigned long lastHeadUpdateTime = 0;
+// 現在の点灯状態
+static bool lightEnabled = false;
 
 
 // ============================================================
 // 内部関数
 // ============================================================
 
-static float clampAngle(
-    float value,
-    float minimum,
-    float maximum
-) {
-    if (value < minimum) {
-        return minimum;
-    }
+static void applyLightState() {
+    digitalWrite(
+        LIGHT_PIN,
+        lightEnabled ? HIGH : LOW
+    );
 
-    if (value > maximum) {
-        return maximum;
-    }
-
-    return value;
-}
-
-
-static float moveToward(
-    float currentValue,
-    float targetValue,
-    float step
-) {
-    if (currentValue < targetValue) {
-        currentValue += step;
-
-        if (currentValue > targetValue) {
-            currentValue = targetValue;
-        }
-    }
-    else if (currentValue > targetValue) {
-        currentValue -= step;
-
-        if (currentValue < targetValue) {
-            currentValue = targetValue;
-        }
-    }
-
-    return currentValue;
+    Serial.print("[LightControl] state=");
+    Serial.println(
+        lightEnabled ? "ON" : "OFF"
+    );
 }
 
 
@@ -67,166 +35,77 @@ static float moveToward(
 // 初期化
 // ============================================================
 
-void initHeadControl() {
-    currentYawAngle = HEAD_YAW_CENTER_ANGLE;
-    targetYawAngle = HEAD_YAW_CENTER_ANGLE;
-
-    currentPitchAngle = HEAD_PITCH_CENTER_ANGLE;
-    targetPitchAngle = HEAD_PITCH_CENTER_ANGLE;
-
-    setServoAngle(
-        HEAD_YAW_CHANNEL,
-        currentYawAngle
+void initLightControl() {
+    pinMode(
+        LIGHT_PIN,
+        OUTPUT
     );
 
-    setServoAngle(
-        HEAD_PITCH_CHANNEL,
-        currentPitchAngle
+    lightEnabled = false;
+    applyLightState();
+
+    Serial.println(
+        "[LightControl] Initialized"
     );
-
-    lastHeadUpdateTime = millis();
-
-    Serial.println("[Head] Initialized");
 }
 
 
 // ============================================================
-// 滑らか移動
+// 点灯・消灯
 // ============================================================
 
-void updateHeadControl() {
-    unsigned long now = millis();
+void lightOn() {
+    lightEnabled = true;
+    applyLightState();
+}
 
-    if (
-        now - lastHeadUpdateTime
-        < HEAD_UPDATE_INTERVAL_MS
-    ) {
-        return;
-    }
 
-    lastHeadUpdateTime = now;
+void lightOff() {
+    lightEnabled = false;
+    applyLightState();
+}
 
-    float previousYaw = currentYawAngle;
-    float previousPitch = currentPitchAngle;
 
-    currentYawAngle = moveToward(
-        currentYawAngle,
-        targetYawAngle,
-        HEAD_SMOOTH_STEP_ANGLE
-    );
-
-    currentPitchAngle = moveToward(
-        currentPitchAngle,
-        targetPitchAngle,
-        HEAD_SMOOTH_STEP_ANGLE
-    );
-
-    // 角度が変わった場合だけPCA9685へ送信する
-    if (currentYawAngle != previousYaw) {
-        setServoAngle(
-            HEAD_YAW_CHANNEL,
-            currentYawAngle
-        );
-    }
-
-    if (currentPitchAngle != previousPitch) {
-        setServoAngle(
-            HEAD_PITCH_CHANNEL,
-            currentPitchAngle
-        );
-    }
+void lightToggle() {
+    lightEnabled = !lightEnabled;
+    applyLightState();
 }
 
 
 // ============================================================
-// 左右
+// 既存コードとの互換用関数
 // ============================================================
 
-void headLeft() {
-    targetYawAngle = HEAD_YAW_MIN_ANGLE;
-
-    Serial.print("[Head] Target yaw: ");
-    Serial.println(targetYawAngle);
+void toggleLight() {
+    lightToggle();
 }
 
 
-void headRight() {
-    targetYawAngle = HEAD_YAW_MAX_ANGLE;
-
-    Serial.print("[Head] Target yaw: ");
-    Serial.println(targetYawAngle);
+void turnLightOn() {
+    lightOn();
 }
 
 
-// ============================================================
-// 上下
-// ============================================================
-
-void headUp() {
-    targetPitchAngle += (
-        HEAD_PITCH_NUDGE_ANGLE
-        * HEAD_PITCH_UP_DIRECTION
-    );
-
-    targetPitchAngle = clampAngle(
-        targetPitchAngle,
-        HEAD_PITCH_MIN_ANGLE,
-        HEAD_PITCH_MAX_ANGLE
-    );
-
-    Serial.print("[Head] Nudge UP, target pitch: ");
-    Serial.println(targetPitchAngle);
+void turnLightOff() {
+    lightOff();
 }
 
 
-void headDown() {
-    targetPitchAngle += (
-        HEAD_PITCH_NUDGE_ANGLE
-        * HEAD_PITCH_DOWN_DIRECTION
-    );
-
-    targetPitchAngle = clampAngle(
-        targetPitchAngle,
-        HEAD_PITCH_MIN_ANGLE,
-        HEAD_PITCH_MAX_ANGLE
-    );
-
-    Serial.print("[Head] Nudge DOWN, target pitch: ");
-    Serial.println(targetPitchAngle);
+void setLight(bool enabled) {
+    lightEnabled = enabled;
+    applyLightState();
 }
 
 
 // ============================================================
-// 中央
+// 状態取得
 // ============================================================
 
-void headCenter() {
-    targetYawAngle = HEAD_YAW_CENTER_ANGLE;
-    targetPitchAngle = HEAD_PITCH_CENTER_ANGLE;
-
-    Serial.println("[Head] Moving slowly to center");
+bool isLightOn() {
+    return lightEnabled;
 }
 
 
-// ============================================================
-// デバッグ
-// ============================================================
-
-float getCurrentHeadYaw() {
-    return currentYawAngle;
-}
-
-
-float getCurrentHeadPitch() {
-    return currentPitchAngle;
-}
-
-
-float getTargetHeadYaw() {
-    return targetYawAngle;
-}
-
-
-float getTargetHeadPitch() {
-    return targetPitchAngle;
+bool getLightState() {
+    return lightEnabled;
 }
