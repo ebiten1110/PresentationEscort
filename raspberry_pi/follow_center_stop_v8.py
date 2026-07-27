@@ -1,6 +1,6 @@
 """
 Presentation Escort
-自動追従 V8
+自動追従 V8.1
 
 機能:
 - 顔の左右方向へTRACK_LEFT / TRACK_RIGHTで小刻みに旋回
@@ -56,6 +56,24 @@ CAMERA_CENTER_OFFSET_Y = getattr(
     cfg,
     "CAMERA_CENTER_OFFSET_Y",
     0,
+)
+
+# 実機ではカメラ画像の左右と旋回方向が逆だったため、
+# 水平方向の制御誤差だけを反転する。
+#
+# True:
+#   画像右側の顔 -> TRACK_LEFT
+#   画像左側の顔 -> TRACK_RIGHT
+#
+# False:
+#   画像右側の顔 -> TRACK_RIGHT
+#   画像左側の顔 -> TRACK_LEFT
+#
+# config.pyに同名の設定があれば、そちらを優先する。
+INVERT_HORIZONTAL_TRACKING = getattr(
+    cfg,
+    "INVERT_HORIZONTAL_TRACKING",
+    True,
 )
 
 SERIAL_PORT = getattr(
@@ -277,6 +295,32 @@ def detect_main_face(
     )
 
     return face, [(x, y, width, height)]
+
+
+# ============================================================
+# 水平制御
+# ============================================================
+
+def get_horizontal_control_error(
+    raw_diff_x: int,
+) -> int:
+    """
+    画像座標上の左右誤差を、
+    実機の旋回方向に合わせた制御誤差へ変換する。
+
+    raw_diff_x:
+        負 = 画像左
+        正 = 画像右
+
+    戻り値:
+        負 = TRACK_LEFT側の制御
+        正 = TRACK_RIGHT側の制御
+    """
+
+    if INVERT_HORIZONTAL_TRACKING:
+        return -raw_diff_x
+
+    return raw_diff_x
 
 
 # ============================================================
@@ -636,15 +680,22 @@ def draw_result(
             -1,
         )
 
+        control_diff_x = (
+            get_horizontal_control_error(
+                face.diff_x
+            )
+        )
+
         cv2.putText(
             frame,
             (
-                f"diff=({face.diff_x},"
-                f"{face.diff_y})"
+                f"rawX={face.diff_x} "
+                f"ctrlX={control_diff_x} "
+                f"diffY={face.diff_y}"
             ),
             (10, 25),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
+            0.50,
             (255, 255, 255),
             2,
         )
@@ -695,13 +746,19 @@ def main() -> None:
         "=============================================="
     )
     print(
-        "Presentation Escort Auto Follow V8"
+        "Presentation Escort Auto Follow V8.1"
     )
     print(
         "Micro turn + center stop + Y tracking + light"
     )
     print(
         "=============================================="
+    )
+
+    print(
+        "[Config] "
+        f"INVERT_HORIZONTAL_TRACKING="
+        f"{INVERT_HORIZONTAL_TRACKING}"
     )
 
     cascade = load_cascade()
@@ -828,13 +885,24 @@ def main() -> None:
 
                 # ------------------------------------------------
                 # 左右追従
+                #
+                # face.diff_xは画像座標上の誤差。
+                # control_diff_xは実機の旋回方向へ合わせた誤差。
+                # 水平制御は必ずcontrol_diff_xを使用する。
                 # ------------------------------------------------
+                control_diff_x = (
+                    get_horizontal_control_error(
+                        face.diff_x
+                    )
+                )
+
                 if esp32.active_track == "TRACK_LEFT":
                     horizontal_state = "TRACKING_LEFT"
 
-                    # 左へ旋回中、顔が中央へ入るか通過したらSTOP。
+                    # TRACK_LEFT中、制御誤差が中央へ入るか
+                    # 反対側へ通過したらSTOP。
                     reached_center = (
-                        face.diff_x >= -BODY_STOP_X
+                        control_diff_x >= -BODY_STOP_X
                     )
 
                     if reached_center:
@@ -849,16 +917,18 @@ def main() -> None:
                         esp32.send_center_stop(
                             (
                                 "LEFT_REACHED_CENTER "
-                                f"diffX={face.diff_x}"
+                                f"rawX={face.diff_x} "
+                                f"ctrlX={control_diff_x}"
                             )
                         )
 
                 elif esp32.active_track == "TRACK_RIGHT":
                     horizontal_state = "TRACKING_RIGHT"
 
-                    # 右へ旋回中、顔が中央へ入るか通過したらSTOP。
+                    # TRACK_RIGHT中、制御誤差が中央へ入るか
+                    # 反対側へ通過したらSTOP。
                     reached_center = (
-                        face.diff_x <= BODY_STOP_X
+                        control_diff_x <= BODY_STOP_X
                     )
 
                     if reached_center:
@@ -873,7 +943,8 @@ def main() -> None:
                         esp32.send_center_stop(
                             (
                                 "RIGHT_REACHED_CENTER "
-                                f"diffX={face.diff_x}"
+                                f"rawX={face.diff_x} "
+                                f"ctrlX={control_diff_x}"
                             )
                         )
 
@@ -889,13 +960,16 @@ def main() -> None:
                 else:
                     body_stop_count = 0
 
-                    if abs(face.diff_x) <= BODY_STOP_X:
+                    if abs(control_diff_x) <= BODY_STOP_X:
                         horizontal_state = "CENTER"
 
                         body_start_candidate = None
                         body_start_count = 0
 
-                    elif face.diff_x <= -BODY_TURN_START_X:
+                    elif (
+                        control_diff_x
+                        <= -BODY_TURN_START_X
+                    ):
                         horizontal_state = "LEFT"
                         candidate = "TRACK_LEFT"
 
@@ -908,7 +982,10 @@ def main() -> None:
                             body_start_candidate = candidate
                             body_start_count = 1
 
-                    elif face.diff_x >= BODY_TURN_START_X:
+                    elif (
+                        control_diff_x
+                        >= BODY_TURN_START_X
+                    ):
                         horizontal_state = "RIGHT"
                         candidate = "TRACK_RIGHT"
 
@@ -941,8 +1018,9 @@ def main() -> None:
 
                 print(
                     f"[Loop {loop_count:04d}] "
-                    f"diff=({face.diff_x},"
-                    f"{face.diff_y}) "
+                    f"rawX={face.diff_x} "
+                    f"ctrlX={control_diff_x} "
+                    f"diffY={face.diff_y} "
                     f"X={horizontal_state} "
                     f"Y={vertical_state} "
                     f"state={esp32.walking_state} "
