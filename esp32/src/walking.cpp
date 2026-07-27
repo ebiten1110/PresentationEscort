@@ -15,7 +15,9 @@ enum WalkingState {
   WALK_FORWARD,
   WALK_STOP,
   WALK_TURN_LEFT,
-  WALK_TURN_RIGHT
+  WALK_TURN_RIGHT,
+  WALK_TRACK_LEFT,
+  WALK_TRACK_RIGHT
 };
 
 static WalkingState walkingState = WALK_IDLE;
@@ -35,6 +37,14 @@ static void setWalkingState(
 
   Serial.print("[Walking] State: ");
   Serial.println(getWalkingStateName());
+}
+
+
+static bool isTrackingTurnState() {
+  return (
+    walkingState == WALK_TRACK_LEFT
+    || walkingState == WALK_TRACK_RIGHT
+  );
 }
 
 
@@ -70,18 +80,7 @@ static void playTurnLeftMotion() {
   setWalkingState(WALK_TURN_LEFT);
 
   Serial.println("[Walking] Direction=LEFT");
-  Serial.println("[Walking] TurnMethod=TWO_STAGE_RECENTER");
-
-  Serial.println("[Walking] PhaseA.SupportFoot=LEFT");
-  Serial.println("[Walking] PhaseA.LiftedFoot=RIGHT");
-
-  Serial.println("[Walking] PhaseB.SupportFoot=RIGHT");
-  Serial.println("[Walking] PhaseB.LiftedFoot=LEFT");
-
-  Serial.println(
-    "[Walking] RecenterHipsWhileFootRaised=YES"
-  );
-
+  Serial.println("[Walking] TurnMode=MANUAL_V7");
   Serial.println(
     "[Walking] Motion="
     "TURN_LEFT_V7_TWO_STAGE_RECENTER"
@@ -95,32 +94,41 @@ static void playTurnRightMotion() {
   setWalkingState(WALK_TURN_RIGHT);
 
   Serial.println("[Walking] Direction=RIGHT");
-  Serial.println("[Walking] TurnMethod=TWO_STAGE_RECENTER");
-
-  Serial.println("[Walking] PhaseA.SupportFoot=RIGHT");
-  Serial.println("[Walking] PhaseA.LiftedFoot=LEFT");
-
-  Serial.println("[Walking] PhaseB.SupportFoot=LEFT");
-  Serial.println("[Walking] PhaseB.LiftedFoot=RIGHT");
-
-  Serial.println(
-    "[Walking] RecenterHipsWhileFootRaised=YES"
-  );
-
-  Serial.println(
-    "[Walking] RightRecenterLift=14_TO_22_DEG"
-  );
-
-  Serial.println(
-    "[Walking] RightFootLowering=22_TO_8_TO_0_DEG"
-  );
-
+  Serial.println("[Walking] TurnMode=MANUAL_V7");
   Serial.println(
     "[Walking] Motion="
     "TURN_RIGHT_V7_RIGHT_FOOT_LIFT_BOOST"
   );
 
   playMotion(getTurnRightMotion());
+}
+
+
+static void playTrackLeftMotion() {
+  setWalkingState(WALK_TRACK_LEFT);
+
+  Serial.println("[Walking] Direction=LEFT");
+  Serial.println("[Walking] TurnMode=AUTO_MICRO_V8");
+  Serial.println("[Walking] Interruptible=YES");
+  Serial.println(
+    "[Walking] Motion=TRACK_LEFT_V8_MICRO"
+  );
+
+  playMotion(getTrackLeftMotion());
+}
+
+
+static void playTrackRightMotion() {
+  setWalkingState(WALK_TRACK_RIGHT);
+
+  Serial.println("[Walking] Direction=RIGHT");
+  Serial.println("[Walking] TurnMode=AUTO_MICRO_V8");
+  Serial.println("[Walking] Interruptible=YES");
+  Serial.println(
+    "[Walking] Motion=TRACK_RIGHT_V8_MICRO"
+  );
+
+  playMotion(getTrackRightMotion());
 }
 
 
@@ -134,12 +142,14 @@ void initWalking() {
   stopRequested = false;
 
   Serial.println("[Walking] Initialized.");
-
   Serial.println(
-    "[Walking] TurnMotionVersion="
+    "[Walking] ManualTurnVersion="
     "V7_RIGHT_FOOT_LIFT_BOOST"
   );
-
+  Serial.println(
+    "[Walking] AutoTurnVersion="
+    "V8_MICRO_CENTER_STOP"
+  );
   Serial.println(
     "[Walking] CommandInversion=DISABLED"
   );
@@ -147,6 +157,7 @@ void initWalking() {
 
 
 void updateWalking() {
+  // MotionPlayerはここでだけ進める。
   updateMotionPlayer();
 
   if (isMotionPlaying()) {
@@ -197,6 +208,20 @@ void updateWalking() {
 
     case WALK_TURN_RIGHT:
       Serial.println("[Walking] RIGHT turn finished.");
+      setWalkingState(WALK_IDLE);
+      break;
+
+    case WALK_TRACK_LEFT:
+      Serial.println(
+        "[Walking] TRACK_LEFT pulse finished."
+      );
+      setWalkingState(WALK_IDLE);
+      break;
+
+    case WALK_TRACK_RIGHT:
+      Serial.println(
+        "[Walking] TRACK_RIGHT pulse finished."
+      );
       setWalkingState(WALK_IDLE);
       break;
 
@@ -257,19 +282,38 @@ void walkForwardOnce() {
 void stopWalking() {
   Serial.println("[Walking] Stop requested.");
 
+  // 自動追従の小刻み旋回だけは、顔が中央へ来た時点で
+  // モーションを直ちに止め、現在角度からSTANDへ戻す。
   if (
-    !isMotionPlaying()
-    && walkingState == WALK_IDLE
+    isMotionPlaying()
+    && isTrackingTurnState()
   ) {
+    Serial.println(
+      "[Walking] Immediate auto-track stop."
+    );
+
+    stopMotion();
+
     stopRequested = false;
     remainingForwardSteps = 0;
-    Serial.println("[Walking] Already idle.");
+
+    playStandMotion();
     return;
   }
 
+  // 手動V7旋回や歩行は転倒防止のため途中中断しない。
   if (isMotionPlaying()) {
     stopRequested = true;
     remainingForwardSteps = 0;
+    return;
+  }
+
+  // 待機状態では不要な停止モーションを開始しない。
+  if (walkingState == WALK_IDLE) {
+    stopRequested = false;
+    remainingForwardSteps = 0;
+
+    Serial.println("[Walking] Already idle.");
     return;
   }
 
@@ -317,6 +361,44 @@ void turnRight() {
 }
 
 
+void trackLeft() {
+  if (
+    isMotionPlaying()
+    || walkingState != WALK_IDLE
+  ) {
+    Serial.println(
+      "[Walking] Busy. Cannot track left."
+    );
+    return;
+  }
+
+  stopRequested = false;
+  remainingForwardSteps = 0;
+
+  Serial.println("[Walking] trackLeft() accepted.");
+  playTrackLeftMotion();
+}
+
+
+void trackRight() {
+  if (
+    isMotionPlaying()
+    || walkingState != WALK_IDLE
+  ) {
+    Serial.println(
+      "[Walking] Busy. Cannot track right."
+    );
+    return;
+  }
+
+  stopRequested = false;
+  remainingForwardSteps = 0;
+
+  Serial.println("[Walking] trackRight() accepted.");
+  playTrackRightMotion();
+}
+
+
 bool isWalkingBusy() {
   return (
     isMotionPlaying()
@@ -347,6 +429,12 @@ const char* getWalkingStateName() {
 
     case WALK_TURN_RIGHT:
       return "TURN_RIGHT";
+
+    case WALK_TRACK_LEFT:
+      return "TRACK_LEFT";
+
+    case WALK_TRACK_RIGHT:
+      return "TRACK_RIGHT";
 
     default:
       return "UNKNOWN";

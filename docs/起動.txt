@@ -1,0 +1,4 @@
+cd ~/PresentationEscort/raspberry_pi
+source .venv/bin/activate
+nohup python3 -m http.server 8000 --bind 0.0.0.0 \
+  > /tmp/camera_http.log 2>&1 &

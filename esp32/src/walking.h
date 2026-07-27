@@ -3,34 +3,25 @@
 
 #include <Arduino.h>
 
-// 歩行制御の初期化
 void initWalking();
-
-// loop() 内で毎回呼ぶ
 void updateWalking();
 
-// 直立姿勢
 void stand();
 
-// 指定回数だけ前進する
 void walkForwardSteps(int steps);
-
-// 1回だけ前進する
 void walkForwardOnce();
 
-// 停止モーションへ移行する
 void stopWalking();
 
-// 左旋回
+// 手動用の大きい旋回
 void turnLeft();
-
-// 右旋回
 void turnRight();
 
-// 歩行・旋回・停止モーション中かどうか
-bool isWalkingBusy();
+// 自動追従用の小刻み旋回
+void trackLeft();
+void trackRight();
 
-// 現在の歩行状態名を返す
+bool isWalkingBusy();
 const char* getWalkingStateName();
 
 #endif

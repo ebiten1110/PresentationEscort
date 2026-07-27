@@ -8,10 +8,6 @@
 #include "light_control.h"
 
 
-// ============================================================
-// 初期化
-// ============================================================
-
 void setup() {
   Serial.begin(115200);
 
@@ -25,7 +21,7 @@ void setup() {
     "Presentation Escort ESP32"
   );
   Serial.println(
-    "1 Degree Smooth Head Control"
+    "V8 Auto Follow Micro Turn"
   );
   Serial.println(
     "========================================"
@@ -39,32 +35,18 @@ void setup() {
   initSerialReceive();
 
   Serial.println("[Main] Setup complete");
-
-  Serial.println(
-    "[Main] Commands: "
-    "LEFT RIGHT FORWARD STOP "
-    "HEAD_LEFT HEAD_RIGHT "
-    "HEAD_UP HEAD_DOWN HEAD_CENTER "
-    "LIGHT_ON LIGHT_OFF LIGHT_TOGGLE"
-  );
 }
 
 
-// ============================================================
-// メインループ
-// ============================================================
-
 void loop() {
-  // Raspberry Pi／シリアルモニターから命令を受信
+  // シリアル受信
   updateSerialReceive();
 
-  // updateWalking()の内部でupdateMotionPlayer()も呼ばれる。
-  // main.cppから重複して呼ばない。
+  // updateWalking()内部でMotionPlayerも1回だけ更新する。
   updateWalking();
 
-  // 頭を目標角度へ1度ずつ動かす。
+  // 頭サーボ
   updateHeadControl();
 
-  // 長いdelayは入れない。
   delay(1);
 }

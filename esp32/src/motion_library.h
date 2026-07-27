@@ -6,10 +6,11 @@
 // =====================================================
 // MotionStep
 // wait     : ひとつ前のステップ開始から何ms後に開始するか
-// ch       : 動かすサーボのPCA9685チャンネル
+// ch       : PCA9685チャンネル
 // angle    : 目標角度
-// duration : その角度まで何msかけて動かすか
+// duration : 目標角度までの移動時間
 // =====================================================
+
 struct MotionStep {
   int wait;
   int ch;
@@ -19,22 +20,26 @@ struct MotionStep {
 
 // =====================================================
 // MotionData
-// name   : モーション名
-// steps  : MotionStep配列
-// length : ステップ数
 // =====================================================
+
 struct MotionData {
   const char* name;
   const MotionStep* steps;
   int length;
 };
 
-// モーション取得関数
+// 通常動作
 const MotionData& getStandMotion();
 const MotionData& getStartWalkMotion();
 const MotionData& getForwardWalkMotion();
 const MotionData& getStopWalkMotion();
+
+// 手動用V7旋回
 const MotionData& getTurnLeftMotion();
 const MotionData& getTurnRightMotion();
+
+// Raspberry Pi自動追従用・小刻み旋回
+const MotionData& getTrackLeftMotion();
+const MotionData& getTrackRightMotion();
 
 #endif

@@ -527,6 +527,326 @@ static const MotionData turnRightMotion = {
 };
 
 
+
+// =====================================================
+// 自動追従専用・小刻み旋回 V8
+// =====================================================
+//
+// 手動LEFT / RIGHTはV7の旋回量を維持する。
+// Raspberry Piの自動追従ではTRACK_LEFT / TRACK_RIGHTを使う。
+//
+// 小刻み旋回は1回あたりの旋回量を小さくし、
+// 顔が中央へ入った時点でSTOPを受け取ると、walking.cpp側で
+// モーションを中断してSTANDへ移行できる。
+// =====================================================
+
+
+// -----------------------------------------------------
+// 小刻み左旋回
+// -----------------------------------------------------
+
+static constexpr double TRACK_LEFT_FIRST_SHIFT_ANGLE = 10.0;
+static constexpr double TRACK_LEFT_SUPPORT_HIP_ANGLE = 2.0;
+static constexpr double TRACK_LEFT_SWING_HIP_ANGLE = -12.0;
+static constexpr double TRACK_LEFT_RECENTER_SHIFT_ANGLE = -8.0;
+
+
+// -----------------------------------------------------
+// 小刻み右旋回
+// -----------------------------------------------------
+
+static constexpr double TRACK_RIGHT_FIRST_SHIFT_ANGLE = -8.0;
+static constexpr double TRACK_RIGHT_SWING_HIP_ANGLE = 9.0;
+static constexpr double TRACK_RIGHT_SUPPORT_HIP_ANGLE = -3.0;
+
+// 右足を確実に浮かせて腰を戻すため、二段階で持ち上げる。
+static constexpr double TRACK_RIGHT_RECENTER_STAGE1_ANGLE = 14.0;
+static constexpr double TRACK_RIGHT_RECENTER_STAGE2_ANGLE = 18.0;
+static constexpr double TRACK_RIGHT_PRELOWER_ANGLE = 6.0;
+
+
+// -----------------------------------------------------
+// 小刻み旋回の時間
+// -----------------------------------------------------
+
+static constexpr int TRACK_CENTER_DURATION_MS = 200;
+static constexpr int TRACK_SHIFT_DURATION_MS = 280;
+static constexpr int TRACK_SWING_DURATION_MS = 320;
+static constexpr int TRACK_LOWER_DURATION_MS = 280;
+static constexpr int TRACK_RECENTER_SHIFT_DURATION_MS = 300;
+static constexpr int TRACK_RECENTER_BOOST_DURATION_MS = 280;
+static constexpr int TRACK_HIP_RECENTER_DURATION_MS = 380;
+static constexpr int TRACK_PRELOWER_DURATION_MS = 260;
+static constexpr int TRACK_FINAL_LOWER_DURATION_MS = 320;
+static constexpr int TRACK_HOLD_DURATION_MS = 220;
+
+// waitは直前段階のdurationより長くする。
+static constexpr int TRACK_WAIT_AFTER_CENTER_MS = 300;
+static constexpr int TRACK_WAIT_AFTER_SHIFT_MS = 420;
+static constexpr int TRACK_WAIT_AFTER_SWING_MS = 460;
+static constexpr int TRACK_WAIT_AFTER_LOWER_MS = 400;
+static constexpr int TRACK_WAIT_AFTER_RECENTER_SHIFT_MS = 430;
+static constexpr int TRACK_WAIT_AFTER_RECENTER_BOOST_MS = 410;
+static constexpr int TRACK_WAIT_AFTER_HIP_RECENTER_MS = 520;
+static constexpr int TRACK_WAIT_AFTER_PRELOWER_MS = 380;
+static constexpr int TRACK_WAIT_AFTER_FINAL_LOWER_MS = 450;
+
+
+// =====================================================
+// 自動追従用・左へ小刻み旋回
+// =====================================================
+
+static const MotionStep trackLeftSteps[] = {
+  // Phase 0: 中央姿勢。
+  { 0, CH_LEFT_HIP,  NEUTRAL_ANGLE, TRACK_CENTER_DURATION_MS },
+  { 0, CH_RIGHT_HIP, NEUTRAL_ANGLE, TRACK_CENTER_DURATION_MS },
+  { 0, CH_LEFT_LEG,  NEUTRAL_ANGLE, TRACK_CENTER_DURATION_MS },
+  { 0, CH_RIGHT_LEG, NEUTRAL_ANGLE, TRACK_CENTER_DURATION_MS },
+
+  // Phase 1: 左足を軸にし、右足を少し浮かせる。
+  {
+    TRACK_WAIT_AFTER_CENTER_MS,
+    CH_LEFT_LEG,
+    TRACK_LEFT_FIRST_SHIFT_ANGLE,
+    TRACK_SHIFT_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    TRACK_LEFT_FIRST_SHIFT_ANGLE,
+    TRACK_SHIFT_DURATION_MS
+  },
+
+  // Phase 2: 右足側を小さく送る。
+  {
+    TRACK_WAIT_AFTER_SHIFT_MS,
+    CH_LEFT_HIP,
+    TRACK_LEFT_SUPPORT_HIP_ANGLE,
+    TRACK_SWING_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    TRACK_LEFT_SWING_HIP_ANGLE,
+    TRACK_SWING_DURATION_MS
+  },
+
+  // Phase 3: 右足を着地。
+  {
+    TRACK_WAIT_AFTER_SWING_MS,
+    CH_LEFT_LEG,
+    NEUTRAL_ANGLE,
+    TRACK_LOWER_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    NEUTRAL_ANGLE,
+    TRACK_LOWER_DURATION_MS
+  },
+
+  // Phase 4: 右足へ体重を移して左足を浮かせる。
+  {
+    TRACK_WAIT_AFTER_LOWER_MS,
+    CH_LEFT_LEG,
+    TRACK_LEFT_RECENTER_SHIFT_ANGLE,
+    TRACK_RECENTER_SHIFT_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    TRACK_LEFT_RECENTER_SHIFT_ANGLE,
+    TRACK_RECENTER_SHIFT_DURATION_MS
+  },
+
+  // Phase 5: 左足を浮かせたまま腰を中央へ戻す。
+  {
+    TRACK_WAIT_AFTER_RECENTER_SHIFT_MS,
+    CH_LEFT_HIP,
+    NEUTRAL_ANGLE,
+    TRACK_HIP_RECENTER_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    NEUTRAL_ANGLE,
+    TRACK_HIP_RECENTER_DURATION_MS
+  },
+
+  // Phase 6: 左足を下ろす。
+  {
+    TRACK_WAIT_AFTER_HIP_RECENTER_MS,
+    CH_LEFT_LEG,
+    NEUTRAL_ANGLE,
+    TRACK_FINAL_LOWER_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    NEUTRAL_ANGLE,
+    TRACK_FINAL_LOWER_DURATION_MS
+  },
+
+  // Phase 7: 中央姿勢を保持。
+  {
+    TRACK_WAIT_AFTER_FINAL_LOWER_MS,
+    CH_LEFT_HIP,
+    NEUTRAL_ANGLE,
+    TRACK_HOLD_DURATION_MS
+  },
+  { 0, CH_RIGHT_HIP, NEUTRAL_ANGLE, TRACK_HOLD_DURATION_MS },
+  { 0, CH_LEFT_LEG,  NEUTRAL_ANGLE, TRACK_HOLD_DURATION_MS },
+  { 0, CH_RIGHT_LEG, NEUTRAL_ANGLE, TRACK_HOLD_DURATION_MS }
+};
+
+static const MotionData trackLeftMotion = {
+  "TRACK_LEFT_V8_MICRO",
+  trackLeftSteps,
+  sizeof(trackLeftSteps) / sizeof(MotionStep)
+};
+
+
+// =====================================================
+// 自動追従用・右へ小刻み旋回
+// =====================================================
+
+static const MotionStep trackRightSteps[] = {
+  // Phase 0: 中央姿勢。
+  { 0, CH_LEFT_HIP,  NEUTRAL_ANGLE, TRACK_CENTER_DURATION_MS },
+  { 0, CH_RIGHT_HIP, NEUTRAL_ANGLE, TRACK_CENTER_DURATION_MS },
+  { 0, CH_LEFT_LEG,  NEUTRAL_ANGLE, TRACK_CENTER_DURATION_MS },
+  { 0, CH_RIGHT_LEG, NEUTRAL_ANGLE, TRACK_CENTER_DURATION_MS },
+
+  // Phase 1: 右足を軸にし、左足を少し浮かせる。
+  {
+    TRACK_WAIT_AFTER_CENTER_MS,
+    CH_LEFT_LEG,
+    TRACK_RIGHT_FIRST_SHIFT_ANGLE,
+    TRACK_SHIFT_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    TRACK_RIGHT_FIRST_SHIFT_ANGLE,
+    TRACK_SHIFT_DURATION_MS
+  },
+
+  // Phase 2: 左足側を小さく送る。
+  {
+    TRACK_WAIT_AFTER_SHIFT_MS,
+    CH_LEFT_HIP,
+    TRACK_RIGHT_SWING_HIP_ANGLE,
+    TRACK_SWING_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    TRACK_RIGHT_SUPPORT_HIP_ANGLE,
+    TRACK_SWING_DURATION_MS
+  },
+
+  // Phase 3: 左足を着地。
+  {
+    TRACK_WAIT_AFTER_SWING_MS,
+    CH_LEFT_LEG,
+    NEUTRAL_ANGLE,
+    TRACK_LOWER_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    NEUTRAL_ANGLE,
+    TRACK_LOWER_DURATION_MS
+  },
+
+  // Phase 4: 左足へ体重を移して右足を持ち上げる。
+  {
+    TRACK_WAIT_AFTER_LOWER_MS,
+    CH_LEFT_LEG,
+    TRACK_RIGHT_RECENTER_STAGE1_ANGLE,
+    TRACK_RECENTER_SHIFT_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    TRACK_RIGHT_RECENTER_STAGE1_ANGLE,
+    TRACK_RECENTER_SHIFT_DURATION_MS
+  },
+
+  // Phase 5: 右足の持ち上げを追加。
+  {
+    TRACK_WAIT_AFTER_RECENTER_SHIFT_MS,
+    CH_LEFT_LEG,
+    TRACK_RIGHT_RECENTER_STAGE2_ANGLE,
+    TRACK_RECENTER_BOOST_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    TRACK_RIGHT_RECENTER_STAGE2_ANGLE,
+    TRACK_RECENTER_BOOST_DURATION_MS
+  },
+
+  // Phase 6: 右足を浮かせたまま腰を中央へ戻す。
+  {
+    TRACK_WAIT_AFTER_RECENTER_BOOST_MS,
+    CH_LEFT_HIP,
+    NEUTRAL_ANGLE,
+    TRACK_HIP_RECENTER_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    NEUTRAL_ANGLE,
+    TRACK_HIP_RECENTER_DURATION_MS
+  },
+
+  // Phase 7: 右足を途中まで下ろす。
+  {
+    TRACK_WAIT_AFTER_HIP_RECENTER_MS,
+    CH_LEFT_LEG,
+    TRACK_RIGHT_PRELOWER_ANGLE,
+    TRACK_PRELOWER_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    TRACK_RIGHT_PRELOWER_ANGLE,
+    TRACK_PRELOWER_DURATION_MS
+  },
+
+  // Phase 8: 右足を0度へ下ろす。
+  {
+    TRACK_WAIT_AFTER_PRELOWER_MS,
+    CH_LEFT_LEG,
+    NEUTRAL_ANGLE,
+    TRACK_FINAL_LOWER_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    NEUTRAL_ANGLE,
+    TRACK_FINAL_LOWER_DURATION_MS
+  },
+
+  // Phase 9: 中央姿勢を保持。
+  {
+    TRACK_WAIT_AFTER_FINAL_LOWER_MS,
+    CH_LEFT_HIP,
+    NEUTRAL_ANGLE,
+    TRACK_HOLD_DURATION_MS
+  },
+  { 0, CH_RIGHT_HIP, NEUTRAL_ANGLE, TRACK_HOLD_DURATION_MS },
+  { 0, CH_LEFT_LEG,  NEUTRAL_ANGLE, TRACK_HOLD_DURATION_MS },
+  { 0, CH_RIGHT_LEG, NEUTRAL_ANGLE, TRACK_HOLD_DURATION_MS }
+};
+
+static const MotionData trackRightMotion = {
+  "TRACK_RIGHT_V8_MICRO",
+  trackRightSteps,
+  sizeof(trackRightSteps) / sizeof(MotionStep)
+};
+
 // =====================================================
 // getter
 // =====================================================
@@ -553,4 +873,12 @@ const MotionData& getTurnLeftMotion() {
 
 const MotionData& getTurnRightMotion() {
   return turnRightMotion;
+}
+
+const MotionData& getTrackLeftMotion() {
+  return trackLeftMotion;
+}
+
+const MotionData& getTrackRightMotion() {
+  return trackRightMotion;
 }

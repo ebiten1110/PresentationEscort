@@ -41,32 +41,15 @@ static void printStatus() {
     isLightOn() ? "ON" : "OFF"
   );
 
-  Serial.print("Head Current Yaw: ");
-  Serial.println(getCurrentHeadYaw(), 1);
-
-  Serial.print("Head Target Yaw: ");
-  Serial.println(getTargetHeadYaw(), 1);
-
-  Serial.print("Head Current Pitch: ");
-  Serial.println(getCurrentHeadPitch(), 1);
-
-  Serial.print("Head Target Pitch: ");
-  Serial.println(getTargetHeadPitch(), 1);
-
-  Serial.print("Head Moving: ");
-  Serial.println(
-    isHeadMoving() ? "YES" : "NO"
-  );
-
   Serial.print("Last Command: ");
   Serial.println(lastCommand);
 
   Serial.println(
-    "Turn Command Inversion: DISABLED"
+    "Manual Turn: V7"
   );
 
   Serial.println(
-    "Turn Motion Version: PIVOT_FOOT_V2_STRONG"
+    "Auto Track Turn: V8_MICRO_CENTER_STOP"
   );
 
   Serial.println(
@@ -80,27 +63,31 @@ void printCommandHelp() {
     "===== PresentationEscort Commands ====="
   );
 
-  Serial.println("STAND        : stand pose");
-  Serial.println("FORWARD      : walk forward once");
-  Serial.println("LEFT         : left pivot turn");
-  Serial.println("RIGHT        : right pivot turn");
-  Serial.println("STOP         : stop walking");
-  Serial.println("STATUS       : show robot status");
-  Serial.println("HELP         : show command list");
+  Serial.println("STAND");
+  Serial.println("FORWARD");
 
-  Serial.println("");
-  Serial.println("Short commands:");
-  Serial.println("W : FORWARD");
-  Serial.println("A : LEFT");
-  Serial.println("D : RIGHT");
-  Serial.println("S : STOP");
-  Serial.println("C : STAND");
-  Serial.println("Q : HEAD_LEFT");
-  Serial.println("E : HEAD_RIGHT");
-  Serial.println("R : HEAD_UP");
-  Serial.println("F : HEAD_DOWN");
-  Serial.println("H : HEAD_CENTER");
-  Serial.println("L : LIGHT_TOGGLE");
+  Serial.println(
+    "LEFT / RIGHT : manual V7 turn"
+  );
+
+  Serial.println(
+    "TRACK_LEFT / TRACK_RIGHT : "
+    "interruptible micro turn"
+  );
+
+  Serial.println("STOP");
+  Serial.println("STATUS");
+  Serial.println("HELP");
+
+  Serial.println("HEAD_LEFT");
+  Serial.println("HEAD_RIGHT");
+  Serial.println("HEAD_UP");
+  Serial.println("HEAD_DOWN");
+  Serial.println("HEAD_CENTER");
+
+  Serial.println("LIGHT_ON");
+  Serial.println("LIGHT_OFF");
+  Serial.println("LIGHT_TOGGLE");
 
   Serial.println(
     "======================================="
@@ -119,9 +106,13 @@ static void executeCommand(
 
   lastCommand = command;
 
-  Serial.print("[SerialReceive] Received=");
+  Serial.print(
+    "[SerialReceive] Received="
+  );
   Serial.println(command);
 
+
+  // 短縮コマンド
   if (command == "W") {
     command = CMD_FORWARD;
   }
@@ -143,20 +134,21 @@ static void executeCommand(
   else if (command == "E") {
     command = CMD_HEAD_RIGHT;
   }
-  else if (command == "H") {
-    command = CMD_HEAD_CENTER;
-  }
   else if (command == "R") {
     command = CMD_HEAD_UP;
   }
   else if (command == "F") {
     command = CMD_HEAD_DOWN;
   }
+  else if (command == "H") {
+    command = CMD_HEAD_CENTER;
+  }
   else if (command == "L") {
     command = CMD_LIGHT_TOGGLE;
   }
 
-  // 左右の命令入れ替えは行わない。
+
+  // 歩行・旋回
   if (command == CMD_STAND) {
     stand();
   }
@@ -164,26 +156,30 @@ static void executeCommand(
     walkForwardOnce();
   }
   else if (command == CMD_LEFT) {
-    Serial.println(
-      "[SerialReceive] Dispatch=turnLeft()"
-    );
     turnLeft();
   }
   else if (command == CMD_RIGHT) {
-    Serial.println(
-      "[SerialReceive] Dispatch=turnRight()"
-    );
     turnRight();
+  }
+  else if (command == CMD_TRACK_LEFT) {
+    trackLeft();
+  }
+  else if (command == CMD_TRACK_RIGHT) {
+    trackRight();
   }
   else if (command == CMD_STOP) {
     stopWalking();
   }
+
+  // 状態
   else if (command == CMD_STATUS) {
     printStatus();
   }
   else if (command == CMD_HELP) {
     printCommandHelp();
   }
+
+  // ライト
   else if (command == CMD_LIGHT_ON) {
     lightOn();
   }
@@ -193,6 +189,8 @@ static void executeCommand(
   else if (command == CMD_LIGHT_TOGGLE) {
     lightToggle();
   }
+
+  // モード
   else if (
     command == CMD_FOLLOW
     || command == CMD_FIX
@@ -203,6 +201,8 @@ static void executeCommand(
       "Mode commands are not implemented yet."
     );
   }
+
+  // 頭
   else if (command == CMD_HEAD_LEFT) {
     headLeft();
   }
@@ -218,6 +218,7 @@ static void executeCommand(
   else if (command == CMD_HEAD_DOWN) {
     headDown();
   }
+
   else {
     Serial.print(
       "[SerialReceive] Unknown command: "
@@ -235,14 +236,8 @@ void initSerialReceive() {
   inputBuffer = "";
   lastCommand = "";
 
-  Serial.println("[SerialReceive] Initialized.");
   Serial.println(
-    "[SerialReceive] "
-    "Turn command inversion: DISABLED"
-  );
-  Serial.println(
-    "[SerialReceive] "
-    "Turn motion version: PIVOT_FOOT_V2_STRONG"
+    "[SerialReceive] Initialized."
   );
 
   printCommandHelp();
@@ -270,6 +265,7 @@ void updateSerialReceive() {
           "[SerialReceive] "
           "Input too long. Cleared."
         );
+
         inputBuffer = "";
       }
     }
