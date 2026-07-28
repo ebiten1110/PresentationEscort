@@ -1,27 +1,26 @@
 """
-Presentation Escort
-自動追従 V8.2
+Presentation Escort 自動追従 V8.3
 
 機能:
-- 顔の左右方向へTRACK_LEFT / TRACK_RIGHTで小刻みに旋回
-- 顔が中央へ到達した瞬間にSTOPを送る
-- ESP32側は自動追従旋回だけ即時中断し、STANDへ戻る
-- 顔の上下位置を判定し、HEAD_UP / HEAD_DOWNで追従
-- 顔検出中はLIGHT_ON、顔ロスト時はLIGHT_OFF
-- 顔検出を320px幅へ縮小して高速化
-- 顔の高さ比率から FAR / GOOD / NEAR を判定
-- 距離判定は表示とログのみで、前進・後退は行わない
+- 顔の左右位置に合わせてTRACK_LEFT / TRACK_RIGHT
+- 顔の上下位置に合わせてHEAD_UP / HEAD_DOWN
+- 顔検出中はライト点灯
+- 顔の高さ比率でFAR / GOOD / NEARを判定
+- FARならTRACK_FORWARDを1パルス
+- NEARならTRACK_BACKWARDを1パルス
+- GOODなら前後移動しない
+- 前後移動は顔が左右中央付近にある場合だけ実行
+- 1パルス終了ごとに距離を再判定
 
 実行:
-    python3 follow_distance_check_v8_2.py
-
-終了:
-    Ctrl+C
+    python3 follow_distance_move_v8_3.py
 """
 
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -33,10 +32,6 @@ import serial
 
 import config as cfg
 
-
-# ============================================================
-# config.pyから読み込む設定
-# ============================================================
 
 CAMERA_MODE = getattr(cfg, "CAMERA_MODE", "usb")
 IP_CAMERA_URL = getattr(cfg, "IP_CAMERA_URL", "")
@@ -62,22 +57,17 @@ CAMERA_CENTER_OFFSET_Y = getattr(
     0,
 )
 
-# 実機ではカメラ画像の左右と旋回方向が逆だったため、
-# 水平方向の制御誤差だけを反転する。
-#
-# True:
-#   画像右側の顔 -> TRACK_LEFT
-#   画像左側の顔 -> TRACK_RIGHT
-#
-# False:
-#   画像右側の顔 -> TRACK_RIGHT
-#   画像左側の顔 -> TRACK_LEFT
-#
-# config.pyに同名の設定があれば、そちらを優先する。
 INVERT_HORIZONTAL_TRACKING = getattr(
     cfg,
     "INVERT_HORIZONTAL_TRACKING",
     True,
+)
+
+# TRACK_FORWARD / TRACK_BACKWARDの実機方向が逆の場合にTrue。
+INVERT_DISTANCE_MOVEMENT = getattr(
+    cfg,
+    "INVERT_DISTANCE_MOVEMENT",
+    False,
 )
 
 SERIAL_PORT = getattr(
@@ -108,69 +98,43 @@ ENABLE_HISTOGRAM_EQUALIZATION = getattr(
 
 
 # ============================================================
-# 自動追従設定
+# 左右・上下
 # ============================================================
 
-# 左右方向
-# この範囲を超えたら小刻み旋回を開始する。
-BODY_TURN_START_X = 85
+BODY_TURN_START_X = getattr(
+    cfg,
+    "BODY_TURN_START_X",
+    85,
+)
+BODY_STOP_X = getattr(
+    cfg,
+    "BODY_STOP_X",
+    28,
+)
 
-# 顔がこの範囲へ入ったらSTOPを送る。
-BODY_STOP_X = 28
-
-# 旋回開始判定の連続フレーム数。
 BODY_START_CONFIRM_FRAMES = 2
-
-# 中央到達・通過判定の連続フレーム数。
 BODY_STOP_CONFIRM_FRAMES = 2
+BODY_RESTART_COOLDOWN_SECONDS = 0.40
 
-# 小刻み旋回終了後の再判定待ち。
-BODY_RESTART_COOLDOWN_SECONDS = 0.35
-
-# 上下方向
 HEAD_START_Y = 42
 HEAD_STOP_Y = 18
-
-# HEAD_UP / HEAD_DOWNを再送する間隔。
 HEAD_COMMAND_INTERVAL_SECONDS = 0.22
 
-# 顔ロスト
-NO_FACE_BODY_STOP_FRAMES = 2
-NO_FACE_LIGHT_OFF_FRAMES = 3
-NO_FACE_HEAD_CENTER_FRAMES = 8
-
-# 顔検出を高速化するための幅。
-DETECTION_WIDTH = 320
-
 
 # ============================================================
-# 距離判定設定
+# 距離移動
 # ============================================================
-#
-# 顔枠の高さ ÷ 画面の高さを距離判定に使用する。
-#
-# FAR_ENTER:
-#   この値未満で「遠い」へ入る。
-#
-# FAR_EXIT:
-#   「遠い」状態から、この値以上で「適正」へ戻る。
-#
-# NEAR_ENTER:
-#   この値より大きいと「近い」へ入る。
-#
-# NEAR_EXIT:
-#   「近い」状態から、この値以下で「適正」へ戻る。
-#
-# ENTERとEXITを分けることで、境界付近の表示ちらつきを防ぐ。
+
+# 実行ログに合わせ、FARを検出可能な範囲へ変更。
 DISTANCE_FAR_ENTER_RATIO = getattr(
     cfg,
     "DISTANCE_FAR_ENTER_RATIO",
-    0.18,
+    0.24,
 )
 DISTANCE_FAR_EXIT_RATIO = getattr(
     cfg,
     "DISTANCE_FAR_EXIT_RATIO",
-    0.20,
+    0.26,
 )
 
 DISTANCE_NEAR_ENTER_RATIO = getattr(
@@ -184,45 +148,144 @@ DISTANCE_NEAR_EXIT_RATIO = getattr(
     0.31,
 )
 
-# 数フレーム平均で顔枠の揺れを抑える。
 DISTANCE_SMOOTHING_FRAMES = getattr(
     cfg,
     "DISTANCE_SMOOTHING_FRAMES",
     5,
 )
 
-# 顔を見失ったときに距離履歴を消すまでのフレーム数。
-NO_FACE_DISTANCE_RESET_FRAMES = getattr(
+DISTANCE_CONFIRM_FRAMES = getattr(
     cfg,
-    "NO_FACE_DISTANCE_RESET_FRAMES",
-    5,
+    "DISTANCE_CONFIRM_FRAMES",
+    3,
 )
 
-# この段階では距離による前進・後退命令を送らない。
-DISTANCE_MOVEMENT_ENABLED = False
-
-# Raspberry Pi Desktop上ではプレビュー画面を表示する。
-# SSHなど画面のない環境では自動的に無効になる。
-SHOW_PREVIEW_WINDOW = getattr(
+DISTANCE_MOVEMENT_ENABLED = getattr(
     cfg,
-    "SHOW_PREVIEW_WINDOW",
-    bool(os.environ.get("DISPLAY")),
+    "DISTANCE_MOVEMENT_ENABLED",
+    True,
 )
-PREVIEW_WINDOW_NAME = "Presentation Escort V8.2"
 
+# 顔が左右中央から外れている場合、前後移動より旋回を優先。
+DISTANCE_MOVE_MAX_X = getattr(
+    cfg,
+    "DISTANCE_MOVE_MAX_X",
+    55,
+)
+
+DISTANCE_RESTART_COOLDOWN_SECONDS = getattr(
+    cfg,
+    "DISTANCE_RESTART_COOLDOWN_SECONDS",
+    0.55,
+)
+
+# テスト中の暴走防止。
+# GOODを一度確認するまでに行える連続パルス数。
+MAX_CONSECUTIVE_DISTANCE_PULSES = getattr(
+    cfg,
+    "MAX_CONSECUTIVE_DISTANCE_PULSES",
+    4,
+)
+
+
+# ============================================================
+# 顔ロスト・カメラ
+# ============================================================
+
+NO_FACE_BODY_STOP_FRAMES = 2
+NO_FACE_LIGHT_OFF_FRAMES = 8
+NO_FACE_HEAD_CENTER_FRAMES = 8
+NO_FACE_DISTANCE_RESET_FRAMES = 5
+
+DETECTION_WIDTH = 320
 LOOP_INTERVAL_SECONDS = 0.04
 
 RESULT_IMAGE_PATH = Path(
-    "follow_distance_check_latest.jpg"
+    "follow_distance_move_latest.jpg"
 )
 SAVE_IMAGE_EVERY_N_LOOPS = 4
+
+SHOW_PREVIEW_WINDOW_REQUESTED = getattr(
+    cfg,
+    "SHOW_PREVIEW_WINDOW",
+    False,
+)
+PREVIEW_WINDOW_NAME = "Presentation Escort V8.3"
 
 PRINT_ALL_ESP32_LINES = False
 
 
-# ============================================================
-# データ
-# ============================================================
+def can_use_preview_window() -> bool:
+    if not SHOW_PREVIEW_WINDOW_REQUESTED:
+        print("[Preview] Disabled by config.")
+        return False
+
+    display = os.environ.get("DISPLAY", "").strip()
+    wayland_display = os.environ.get(
+        "WAYLAND_DISPLAY",
+        "",
+    ).strip()
+
+    if display:
+        xdpyinfo = shutil.which("xdpyinfo")
+
+        if xdpyinfo is None:
+            print(
+                "[Preview] Disabled: "
+                "xdpyinfo is not installed."
+            )
+            return False
+
+        try:
+            result = subprocess.run(
+                [xdpyinfo, "-display", display],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2.0,
+                check=False,
+            )
+        except (
+            OSError,
+            subprocess.TimeoutExpired,
+        ):
+            return False
+
+        if result.returncode == 0:
+            print(
+                f"[Preview] Enabled: DISPLAY={display}"
+            )
+            return True
+
+        print(
+            "[Preview] Disabled: "
+            f"cannot connect to DISPLAY={display}"
+        )
+        return False
+
+    runtime_dir = os.environ.get(
+        "XDG_RUNTIME_DIR",
+        "",
+    ).strip()
+
+    if wayland_display and runtime_dir:
+        socket_path = (
+            Path(runtime_dir)
+            / wayland_display
+        )
+
+        if socket_path.exists():
+            print(
+                "[Preview] Enabled: "
+                f"Wayland={wayland_display}"
+            )
+            return True
+
+    print(
+        "[Preview] Disabled: "
+        "usable display not found."
+    )
+    return False
+
 
 @dataclass
 class FaceResult:
@@ -235,10 +298,6 @@ class FaceResult:
     diff_x: int
     diff_y: int
 
-
-# ============================================================
-# カメラ・顔検出
-# ============================================================
 
 def open_camera() -> cv2.VideoCapture:
     if CAMERA_MODE == "usb":
@@ -321,18 +380,18 @@ def detect_main_face(
     if ENABLE_HISTOGRAM_EQUALIZATION:
         gray = cv2.equalizeHist(gray)
 
-    small_faces = cascade.detectMultiScale(
+    faces = cascade.detectMultiScale(
         gray,
         scaleFactor=1.15,
         minNeighbors=4,
         minSize=(24, 24),
     )
 
-    if len(small_faces) == 0:
+    if len(faces) == 0:
         return None, []
 
     sx, sy, sw, sh = max(
-        small_faces,
+        faces,
         key=lambda item: item[2] * item[3],
     )
 
@@ -355,93 +414,51 @@ def detect_main_face(
         + CAMERA_CENTER_OFFSET_Y
     )
 
-    face = FaceResult(
-        x=x,
-        y=y,
-        width=width,
-        height=height,
-        center_x=center_x,
-        center_y=center_y,
-        diff_x=center_x - target_center_x,
-        diff_y=center_y - target_center_y,
+    return (
+        FaceResult(
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            center_x=center_x,
+            center_y=center_y,
+            diff_x=center_x - target_center_x,
+            diff_y=center_y - target_center_y,
+        ),
+        [(x, y, width, height)],
     )
 
-    return face, [(x, y, width, height)]
-
-
-# ============================================================
-# 水平制御
-# ============================================================
 
 def get_horizontal_control_error(
     raw_diff_x: int,
 ) -> int:
-    """
-    画像座標上の左右誤差を、
-    実機の旋回方向に合わせた制御誤差へ変換する。
-
-    raw_diff_x:
-        負 = 画像左
-        正 = 画像右
-
-    戻り値:
-        負 = TRACK_LEFT側の制御
-        正 = TRACK_RIGHT側の制御
-    """
-
     if INVERT_HORIZONTAL_TRACKING:
         return -raw_diff_x
 
     return raw_diff_x
 
 
-# ============================================================
-# 距離判定
-# ============================================================
-
 class DistanceEstimator:
-    """
-    顔枠の高さ比率から距離を3段階で判定する。
-
-    FAR:
-        顔が小さい。将来は前進候補。
-
-    GOOD:
-        適正距離。将来は停止候補。
-
-    NEAR:
-        顔が大きい。将来は後退候補。
-
-    現段階では判定と表示だけで、移動命令は送信しない。
-    """
-
     def __init__(self) -> None:
-        max_length = max(
-            1,
-            int(DISTANCE_SMOOTHING_FRAMES),
-        )
-
         self.history: Deque[float] = deque(
-            maxlen=max_length
+            maxlen=max(
+                1,
+                int(DISTANCE_SMOOTHING_FRAMES),
+            )
         )
         self.state = "UNKNOWN"
-        self.smoothed_ratio: Optional[float] = None
+        self.ratio: Optional[float] = None
 
     def reset(self) -> None:
         self.history.clear()
         self.state = "UNKNOWN"
-        self.smoothed_ratio = None
+        self.ratio = None
 
     def update(
         self,
         face_height: int,
         frame_height: int,
     ) -> Tuple[str, float, bool]:
-        if frame_height <= 0:
-            raise ValueError(
-                "frame_height must be greater than 0"
-            )
-
         raw_ratio = (
             float(face_height)
             / float(frame_height)
@@ -449,81 +466,44 @@ class DistanceEstimator:
 
         self.history.append(raw_ratio)
 
-        smoothed_ratio = (
+        ratio = (
             sum(self.history)
             / len(self.history)
         )
 
-        previous_state = self.state
-        self.smoothed_ratio = smoothed_ratio
+        previous = self.state
+        self.ratio = ratio
 
         if self.state == "FAR":
-            if (
-                smoothed_ratio
-                >= DISTANCE_FAR_EXIT_RATIO
-            ):
-                if (
-                    smoothed_ratio
-                    > DISTANCE_NEAR_ENTER_RATIO
-                ):
-                    self.state = "NEAR"
-                else:
-                    self.state = "GOOD"
+            if ratio >= DISTANCE_FAR_EXIT_RATIO:
+                self.state = (
+                    "NEAR"
+                    if ratio > DISTANCE_NEAR_ENTER_RATIO
+                    else "GOOD"
+                )
 
         elif self.state == "NEAR":
-            if (
-                smoothed_ratio
-                <= DISTANCE_NEAR_EXIT_RATIO
-            ):
-                if (
-                    smoothed_ratio
-                    < DISTANCE_FAR_ENTER_RATIO
-                ):
-                    self.state = "FAR"
-                else:
-                    self.state = "GOOD"
+            if ratio <= DISTANCE_NEAR_EXIT_RATIO:
+                self.state = (
+                    "FAR"
+                    if ratio < DISTANCE_FAR_ENTER_RATIO
+                    else "GOOD"
+                )
 
         else:
-            if (
-                smoothed_ratio
-                < DISTANCE_FAR_ENTER_RATIO
-            ):
+            if ratio < DISTANCE_FAR_ENTER_RATIO:
                 self.state = "FAR"
-
-            elif (
-                smoothed_ratio
-                > DISTANCE_NEAR_ENTER_RATIO
-            ):
+            elif ratio > DISTANCE_NEAR_ENTER_RATIO:
                 self.state = "NEAR"
-
             else:
                 self.state = "GOOD"
 
-        changed = self.state != previous_state
-
         return (
             self.state,
-            smoothed_ratio,
-            changed,
+            ratio,
+            self.state != previous,
         )
 
-    def get_action_label(self) -> str:
-        # 今は動かさないことを明示する。
-        if self.state == "FAR":
-            return "FORWARD_CANDIDATE_ONLY"
-
-        if self.state == "NEAR":
-            return "BACKWARD_CANDIDATE_ONLY"
-
-        if self.state == "GOOD":
-            return "HOLD_CANDIDATE_ONLY"
-
-        return "NONE"
-
-
-# ============================================================
-# ESP32シリアル
-# ============================================================
 
 class ESP32Serial:
     IMPORTANT_PREFIXES = (
@@ -542,9 +522,8 @@ class ESP32Serial:
 
         self.walking_state = "UNKNOWN"
         self.busy = False
-
-        self.active_track: Optional[str] = None
-        self.stop_sent_for_track = False
+        self.active_body: Optional[str] = None
+        self.stop_sent = False
 
         self.last_idle_time = time.monotonic()
         self.fault = False
@@ -572,10 +551,9 @@ class ESP32Serial:
         self.send("LIGHT_OFF")
         self.send("STATUS")
 
-        # STATUS応答を少し待つ。
-        wait_until = time.monotonic() + 0.8
+        limit = time.monotonic() + 0.8
 
-        while time.monotonic() < wait_until:
+        while time.monotonic() < limit:
             self.poll()
             time.sleep(0.02)
 
@@ -594,67 +572,64 @@ class ESP32Serial:
         ):
             return False
 
-        message = (
-            command.strip().upper()
-            + "\n"
-        )
-
         try:
             self.ser.write(
-                message.encode("utf-8")
+                (
+                    command.strip().upper()
+                    + "\n"
+                ).encode("utf-8")
             )
             self.ser.flush()
 
         except serial.SerialException as error:
-            print(
-                f"[Serial] ERROR: {error}"
-            )
+            print(f"[Serial] ERROR: {error}")
             self.fault = True
             return False
 
         print(f"[Serial] Sent: {command}")
         return True
 
-    def send_track(self, command: str) -> bool:
-        if self.busy or self.fault:
-            return False
-
-        if command not in (
+    def send_body(self, command: str) -> bool:
+        allowed = {
             "TRACK_LEFT",
             "TRACK_RIGHT",
-        ):
+            "TRACK_FORWARD",
+            "TRACK_BACKWARD",
+        }
+
+        if command not in allowed:
             raise ValueError(command)
+
+        if self.busy or self.fault:
+            return False
 
         if not self.send(command):
             return False
 
         self.busy = True
-        self.active_track = command
-        self.stop_sent_for_track = False
+        self.active_body = command
+        self.stop_sent = False
 
-        print(
-            f"[Body] START {command}"
-        )
+        print(f"[Body] START {command}")
         return True
 
-    def send_center_stop(self, reason: str) -> bool:
-        if self.stop_sent_for_track:
+    def send_stop(self, reason: str) -> bool:
+        if self.active_body is None:
             return False
 
-        if self.active_track is None:
+        if self.stop_sent:
             return False
 
         if not self.send("STOP"):
             return False
 
-        self.stop_sent_for_track = True
+        self.stop_sent = True
 
         print(
-            "[Body] CENTER STOP "
-            f"active={self.active_track} "
+            "[Body] STOP "
+            f"active={self.active_body} "
             f"reason={reason}"
         )
-
         return True
 
     def poll(self) -> None:
@@ -722,8 +697,8 @@ class ESP32Serial:
 
             if state == "IDLE":
                 self.busy = False
-                self.active_track = None
-                self.stop_sent_for_track = False
+                self.active_body = None
+                self.stop_sent = False
                 self.last_idle_time = (
                     time.monotonic()
                 )
@@ -738,20 +713,19 @@ class ESP32Serial:
         ):
             self.fault = True
 
-    def ready_for_new_track(self) -> bool:
+    def ready_for_body_command(
+        self,
+        cooldown: float,
+    ) -> bool:
         if self.busy or self.fault:
             return False
 
         return (
             time.monotonic()
             - self.last_idle_time
-            >= BODY_RESTART_COOLDOWN_SECONDS
+            >= cooldown
         )
 
-
-# ============================================================
-# 補助制御
-# ============================================================
 
 class RepeatedCommand:
     def __init__(self) -> None:
@@ -770,18 +744,9 @@ class RepeatedCommand:
 
         now = time.monotonic()
 
-        command_changed = (
-            command != self.last_command
-        )
-
-        interval_elapsed = (
-            now - self.last_sent_time
-            >= interval
-        )
-
-        if not (
-            command_changed
-            or interval_elapsed
+        if (
+            command == self.last_command
+            and now - self.last_sent_time < interval
         ):
             return False
 
@@ -793,20 +758,53 @@ class RepeatedCommand:
         return True
 
 
-# ============================================================
-# 描画
-# ============================================================
+def map_distance_command(
+    distance_state: str,
+) -> Optional[str]:
+    command: Optional[str]
+
+    if distance_state == "FAR":
+        command = "TRACK_FORWARD"
+    elif distance_state == "NEAR":
+        command = "TRACK_BACKWARD"
+    else:
+        return None
+
+    if INVERT_DISTANCE_MOVEMENT:
+        if command == "TRACK_FORWARD":
+            return "TRACK_BACKWARD"
+        return "TRACK_FORWARD"
+
+    return command
+
+
+def distance_action_label(
+    distance_state: str,
+) -> str:
+    command = map_distance_command(
+        distance_state
+    )
+
+    if command is None:
+        return "HOLD"
+
+    if not DISTANCE_MOVEMENT_ENABLED:
+        return f"{command}_DISABLED"
+
+    return command
+
 
 def draw_result(
     frame,
     face: Optional[FaceResult],
     esp32: ESP32Serial,
-    horizontal: str,
-    vertical: str,
-    light_on: bool,
+    horizontal_state: str,
+    vertical_state: str,
     distance_state: str,
     distance_ratio: Optional[float],
     distance_action: str,
+    light_on: bool,
+    pulse_count: int,
 ) -> None:
     height, width = frame.shape[:2]
 
@@ -834,30 +832,6 @@ def draw_result(
         1,
     )
 
-    for offset in (
-        -BODY_STOP_X,
-        BODY_STOP_X,
-    ):
-        cv2.line(
-            frame,
-            (center_x + offset, 0),
-            (center_x + offset, height),
-            (0, 255, 255),
-            1,
-        )
-
-    for offset in (
-        -HEAD_STOP_Y,
-        HEAD_STOP_Y,
-    ):
-        cv2.line(
-            frame,
-            (0, center_y + offset),
-            (width, center_y + offset),
-            (255, 255, 0),
-            1,
-        )
-
     if face is not None:
         cv2.rectangle(
             frame,
@@ -881,17 +855,15 @@ def draw_result(
             -1,
         )
 
-        control_diff_x = (
-            get_horizontal_control_error(
-                face.diff_x
-            )
+        control_x = get_horizontal_control_error(
+            face.diff_x
         )
 
         cv2.putText(
             frame,
             (
                 f"rawX={face.diff_x} "
-                f"ctrlX={control_diff_x} "
+                f"ctrlX={control_x} "
                 f"diffY={face.diff_y}"
             ),
             (10, 25),
@@ -901,132 +873,76 @@ def draw_result(
             2,
         )
 
-    cv2.putText(
-        frame,
-        (
-            f"X={horizontal} "
-            f"Y={vertical}"
-        ),
-        (10, 55),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        (255, 255, 255),
-        2,
+    ratio_text = (
+        "---"
+        if distance_ratio is None
+        else f"{distance_ratio:.3f}"
     )
 
-    cv2.putText(
-        frame,
-        (
-            f"ESP32={esp32.walking_state} "
-            f"active={esp32.active_track}"
-        ),
-        (10, 85),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.50,
-        (255, 255, 255),
-        2,
-    )
-
-    cv2.putText(
-        frame,
-        f"Light={'ON' if light_on else 'OFF'}",
-        (10, 115),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.50,
-        (255, 255, 255),
-        2,
-    )
-
-    if distance_ratio is None:
-        ratio_text = "---"
-    else:
-        ratio_text = f"{distance_ratio:.3f}"
-
-    cv2.putText(
-        frame,
+    lines = (
+        f"X={horizontal_state} Y={vertical_state}",
         (
             f"Distance={distance_state} "
-            f"FaceHeightRatio={ratio_text}"
+            f"Ratio={ratio_text}"
         ),
-        (10, 145),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.62,
-        (255, 255, 255),
-        2,
-    )
-
-    cv2.putText(
-        frame,
         (
-            f"DistanceAction={distance_action} "
-            f"MovementEnabled={DISTANCE_MOVEMENT_ENABLED}"
+            f"Action={distance_action} "
+            f"Pulse={pulse_count}/"
+            f"{MAX_CONSECUTIVE_DISTANCE_PULSES}"
         ),
-        (10, 175),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (255, 255, 255),
-        1,
-    )
-
-    cv2.putText(
-        frame,
         (
-            f"FAR<{DISTANCE_FAR_ENTER_RATIO:.2f} "
-            f"GOOD "
-            f"NEAR>{DISTANCE_NEAR_ENTER_RATIO:.2f}"
+            f"ESP32={esp32.walking_state} "
+            f"active={esp32.active_body}"
         ),
-        (10, 200),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.44,
-        (255, 255, 255),
-        1,
+        (
+            f"Light={'ON' if light_on else 'OFF'} "
+            f"Move={DISTANCE_MOVEMENT_ENABLED}"
+        ),
     )
 
+    for index, line in enumerate(lines):
+        cv2.putText(
+            frame,
+            line,
+            (10, 55 + index * 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.50,
+            (255, 255, 255),
+            2,
+        )
 
-# ============================================================
-# メイン
-# ============================================================
 
 def main() -> None:
     print(
         "=============================================="
     )
     print(
-        "Presentation Escort Auto Follow V8.2"
+        "Presentation Escort Auto Follow V8.3"
     )
     print(
-        "Micro turn + center stop + Y tracking + light"
+        "Distance movement test"
     )
     print(
         "=============================================="
     )
 
     print(
-        "[Config] "
-        f"INVERT_HORIZONTAL_TRACKING="
-        f"{INVERT_HORIZONTAL_TRACKING}"
+        "[DistanceConfig] "
+        f"FAR={DISTANCE_FAR_ENTER_RATIO:.3f}/"
+        f"{DISTANCE_FAR_EXIT_RATIO:.3f} "
+        f"NEAR={DISTANCE_NEAR_ENTER_RATIO:.3f}/"
+        f"{DISTANCE_NEAR_EXIT_RATIO:.3f}"
     )
-
     print(
         "[DistanceConfig] "
-        f"FAR_ENTER={DISTANCE_FAR_ENTER_RATIO:.3f} "
-        f"FAR_EXIT={DISTANCE_FAR_EXIT_RATIO:.3f} "
-        f"NEAR_ENTER={DISTANCE_NEAR_ENTER_RATIO:.3f} "
-        f"NEAR_EXIT={DISTANCE_NEAR_EXIT_RATIO:.3f} "
-        f"SMOOTH={DISTANCE_SMOOTHING_FRAMES}"
+        f"MOVEMENT={DISTANCE_MOVEMENT_ENABLED} "
+        f"INVERT={INVERT_DISTANCE_MOVEMENT} "
+        f"MAX_X={DISTANCE_MOVE_MAX_X} "
+        f"MAX_PULSES="
+        f"{MAX_CONSECUTIVE_DISTANCE_PULSES}"
     )
 
-    print(
-        "[DistanceConfig] "
-        "MOVEMENT=DISABLED "
-        "(display and log only)"
-    )
-
-    print(
-        "[Preview] "
-        f"SHOW_PREVIEW_WINDOW="
-        f"{SHOW_PREVIEW_WINDOW}"
-    )
+    preview_enabled = can_use_preview_window()
 
     cascade = load_cascade()
     cap = open_camera()
@@ -1036,12 +952,10 @@ def main() -> None:
             "カメラを開けませんでした。"
         )
 
-    # 起動直後の画像を捨てる。
     for _ in range(6):
         cap.read()
 
     esp32 = ESP32Serial()
-
     head_sender = RepeatedCommand()
     distance_estimator = DistanceEstimator()
 
@@ -1051,6 +965,11 @@ def main() -> None:
     body_start_candidate: Optional[str] = None
     body_start_count = 0
     body_stop_count = 0
+
+    distance_candidate: Optional[str] = None
+    distance_candidate_count = 0
+    consecutive_distance_pulses = 0
+    last_distance_command: Optional[str] = None
 
     loop_count = 0
 
@@ -1080,7 +999,6 @@ def main() -> None:
 
             horizontal_state = "NO_FACE"
             vertical_state = "NO_FACE"
-
             distance_state = "NO_FACE"
             distance_ratio: Optional[float] = None
             distance_action = "NONE"
@@ -1092,20 +1010,20 @@ def main() -> None:
                 body_start_count = 0
                 body_stop_count = 0
 
+                distance_candidate = None
+                distance_candidate_count = 0
+
+                if (
+                    no_face_count
+                    >= NO_FACE_BODY_STOP_FRAMES
+                ):
+                    esp32.send_stop("FACE_LOST")
+
                 if (
                     no_face_count
                     >= NO_FACE_DISTANCE_RESET_FRAMES
                 ):
                     distance_estimator.reset()
-
-                # 顔を見失った状態で旋回中なら早めに止める。
-                if (
-                    no_face_count
-                    >= NO_FACE_BODY_STOP_FRAMES
-                ):
-                    esp32.send_center_stop(
-                        "FACE_LOST"
-                    )
 
                 if (
                     light_on
@@ -1125,9 +1043,7 @@ def main() -> None:
                 print(
                     f"[Loop {loop_count:04d}] "
                     f"NO_FACE count={no_face_count} "
-                    f"Distance=NO_FACE "
-                    f"DistanceAction=NONE "
-                    f"state={esp32.walking_state}"
+                    f"active={esp32.active_body}"
                 )
 
             else:
@@ -1138,32 +1054,34 @@ def main() -> None:
                     distance_ratio,
                     distance_changed,
                 ) = distance_estimator.update(
-                    face_height=face.height,
-                    frame_height=frame.shape[0],
+                    face.height,
+                    frame.shape[0],
                 )
 
                 distance_action = (
-                    distance_estimator.get_action_label()
+                    distance_action_label(
+                        distance_state
+                    )
                 )
 
                 if distance_changed:
                     print(
                         "[Distance] "
                         f"State={distance_state} "
-                        f"FaceHeight={face.height}px "
+                        f"FaceH={face.height}px "
                         f"Ratio={distance_ratio:.3f} "
-                        f"Action={distance_action} "
-                        "Movement=DISABLED"
+                        f"Action={distance_action}"
                     )
 
-                # 顔検出中はライトを点灯。
+                if distance_state == "GOOD":
+                    consecutive_distance_pulses = 0
+                    last_distance_command = None
+
                 if not light_on:
                     if esp32.send("LIGHT_ON"):
                         light_on = True
 
-                # ------------------------------------------------
-                # 上下追従
-                # ------------------------------------------------
+                # 上下
                 if face.diff_y <= -HEAD_START_Y:
                     vertical_state = "UP"
                     head_command = "HEAD_UP"
@@ -1186,29 +1104,20 @@ def main() -> None:
                     HEAD_COMMAND_INTERVAL_SECONDS,
                 )
 
-                # ------------------------------------------------
-                # 左右追従
-                #
-                # face.diff_xは画像座標上の誤差。
-                # control_diff_xは実機の旋回方向へ合わせた誤差。
-                # 水平制御は必ずcontrol_diff_xを使用する。
-                # ------------------------------------------------
-                control_diff_x = (
+                control_x = (
                     get_horizontal_control_error(
                         face.diff_x
                     )
                 )
 
-                if esp32.active_track == "TRACK_LEFT":
+                # --------------------------------------------
+                # 現在動作中の停止判定
+                # --------------------------------------------
+
+                if esp32.active_body == "TRACK_LEFT":
                     horizontal_state = "TRACKING_LEFT"
 
-                    # TRACK_LEFT中、制御誤差が中央へ入るか
-                    # 反対側へ通過したらSTOP。
-                    reached_center = (
-                        control_diff_x >= -BODY_STOP_X
-                    )
-
-                    if reached_center:
+                    if control_x >= -BODY_STOP_X:
                         body_stop_count += 1
                     else:
                         body_stop_count = 0
@@ -1217,24 +1126,17 @@ def main() -> None:
                         body_stop_count
                         >= BODY_STOP_CONFIRM_FRAMES
                     ):
-                        esp32.send_center_stop(
+                        esp32.send_stop(
                             (
-                                "LEFT_REACHED_CENTER "
-                                f"rawX={face.diff_x} "
-                                f"ctrlX={control_diff_x}"
+                                "LEFT_CENTER "
+                                f"ctrlX={control_x}"
                             )
                         )
 
-                elif esp32.active_track == "TRACK_RIGHT":
+                elif esp32.active_body == "TRACK_RIGHT":
                     horizontal_state = "TRACKING_RIGHT"
 
-                    # TRACK_RIGHT中、制御誤差が中央へ入るか
-                    # 反対側へ通過したらSTOP。
-                    reached_center = (
-                        control_diff_x <= BODY_STOP_X
-                    )
-
-                    if reached_center:
+                    if control_x <= BODY_STOP_X:
                         body_stop_count += 1
                     else:
                         body_stop_count = 0
@@ -1243,11 +1145,39 @@ def main() -> None:
                         body_stop_count
                         >= BODY_STOP_CONFIRM_FRAMES
                     ):
-                        esp32.send_center_stop(
+                        esp32.send_stop(
                             (
-                                "RIGHT_REACHED_CENTER "
-                                f"rawX={face.diff_x} "
-                                f"ctrlX={control_diff_x}"
+                                "RIGHT_CENTER "
+                                f"ctrlX={control_x}"
+                            )
+                        )
+
+                elif esp32.active_body in (
+                    "TRACK_FORWARD",
+                    "TRACK_BACKWARD",
+                ):
+                    horizontal_state = "DISTANCE_MOVING"
+
+                    # 途中で横へ大きく外れた、GOODになった、
+                    # または逆方向が必要になった場合は停止予約。
+                    expected = esp32.active_body
+                    requested = map_distance_command(
+                        distance_state
+                    )
+
+                    if abs(control_x) > DISTANCE_MOVE_MAX_X:
+                        esp32.send_stop(
+                            (
+                                "HORIZONTAL_DRIFT "
+                                f"ctrlX={control_x}"
+                            )
+                        )
+
+                    elif requested != expected:
+                        esp32.send_stop(
+                            (
+                                "DISTANCE_CHANGED "
+                                f"state={distance_state}"
                             )
                         )
 
@@ -1256,84 +1186,143 @@ def main() -> None:
                         esp32.walking_state
                     )
 
-                    body_start_candidate = None
-                    body_start_count = 0
-                    body_stop_count = 0
+                # --------------------------------------------
+                # IDLE時の次動作
+                # --------------------------------------------
 
                 else:
                     body_stop_count = 0
 
-                    if abs(control_diff_x) <= BODY_STOP_X:
+                    if abs(control_x) <= BODY_STOP_X:
                         horizontal_state = "CENTER"
 
-                        body_start_candidate = None
-                        body_start_count = 0
-
-                    elif (
-                        control_diff_x
-                        <= -BODY_TURN_START_X
-                    ):
+                    elif control_x <= -BODY_TURN_START_X:
                         horizontal_state = "LEFT"
-                        candidate = "TRACK_LEFT"
 
-                        if (
-                            candidate
-                            == body_start_candidate
-                        ):
-                            body_start_count += 1
-                        else:
-                            body_start_candidate = candidate
-                            body_start_count = 1
-
-                    elif (
-                        control_diff_x
-                        >= BODY_TURN_START_X
-                    ):
+                    elif control_x >= BODY_TURN_START_X:
                         horizontal_state = "RIGHT"
-                        candidate = "TRACK_RIGHT"
-
-                        if (
-                            candidate
-                            == body_start_candidate
-                        ):
-                            body_start_count += 1
-                        else:
-                            body_start_candidate = candidate
-                            body_start_count = 1
 
                     else:
                         horizontal_state = "HOLD"
 
+                    turn_candidate: Optional[str] = None
+
+                    if control_x <= -BODY_TURN_START_X:
+                        turn_candidate = "TRACK_LEFT"
+                    elif control_x >= BODY_TURN_START_X:
+                        turn_candidate = "TRACK_RIGHT"
+
+                    if turn_candidate is not None:
+                        distance_candidate = None
+                        distance_candidate_count = 0
+
+                        if (
+                            turn_candidate
+                            == body_start_candidate
+                        ):
+                            body_start_count += 1
+                        else:
+                            body_start_candidate = (
+                                turn_candidate
+                            )
+                            body_start_count = 1
+
+                        if (
+                            body_start_count
+                            >= BODY_START_CONFIRM_FRAMES
+                            and esp32.ready_for_body_command(
+                                BODY_RESTART_COOLDOWN_SECONDS
+                            )
+                        ):
+                            if esp32.send_body(
+                                turn_candidate
+                            ):
+                                body_start_candidate = None
+                                body_start_count = 0
+
+                    else:
                         body_start_candidate = None
                         body_start_count = 0
 
-                    if (
-                        body_start_candidate is not None
-                        and body_start_count
-                        >= BODY_START_CONFIRM_FRAMES
-                        and esp32.ready_for_new_track()
-                    ):
-                        if esp32.send_track(
-                            body_start_candidate
-                        ):
-                            body_start_candidate = None
-                            body_start_count = 0
+                        requested_distance_command = (
+                            map_distance_command(
+                                distance_state
+                            )
+                        )
+
+                        can_move_distance = (
+                            DISTANCE_MOVEMENT_ENABLED
+                            and requested_distance_command
+                            is not None
+                            and abs(control_x)
+                            <= DISTANCE_MOVE_MAX_X
+                        )
+
+                        if can_move_distance:
+                            if (
+                                requested_distance_command
+                                != last_distance_command
+                            ):
+                                consecutive_distance_pulses = 0
+                                last_distance_command = (
+                                    requested_distance_command
+                                )
+
+                            if (
+                                requested_distance_command
+                                == distance_candidate
+                            ):
+                                distance_candidate_count += 1
+                            else:
+                                distance_candidate = (
+                                    requested_distance_command
+                                )
+                                distance_candidate_count = 1
+
+                            pulse_limit_ok = (
+                                consecutive_distance_pulses
+                                < MAX_CONSECUTIVE_DISTANCE_PULSES
+                            )
+
+                            if (
+                                distance_candidate_count
+                                >= DISTANCE_CONFIRM_FRAMES
+                                and pulse_limit_ok
+                                and esp32.ready_for_body_command(
+                                    DISTANCE_RESTART_COOLDOWN_SECONDS
+                                )
+                            ):
+                                if esp32.send_body(
+                                    requested_distance_command
+                                ):
+                                    consecutive_distance_pulses += 1
+                                    distance_candidate = None
+                                    distance_candidate_count = 0
+
+                            elif not pulse_limit_ok:
+                                distance_action = (
+                                    "SAFETY_PULSE_LIMIT"
+                                )
+
+                        else:
+                            distance_candidate = None
+                            distance_candidate_count = 0
 
                 print(
                     f"[Loop {loop_count:04d}] "
                     f"rawX={face.diff_x} "
-                    f"ctrlX={control_diff_x} "
+                    f"ctrlX={control_x} "
                     f"diffY={face.diff_y} "
-                    f"X={horizontal_state} "
-                    f"Y={vertical_state} "
                     f"FaceH={face.height}px "
                     f"Distance={distance_state} "
                     f"Ratio={distance_ratio:.3f} "
-                    f"DistanceAction={distance_action} "
-                    f"Movement=DISABLED "
+                    f"Action={distance_action} "
+                    f"X={horizontal_state} "
+                    f"Y={vertical_state} "
+                    f"Pulse={consecutive_distance_pulses}/"
+                    f"{MAX_CONSECUTIVE_DISTANCE_PULSES} "
                     f"state={esp32.walking_state} "
-                    f"active={esp32.active_track} "
-                    f"light={'ON' if light_on else 'OFF'}"
+                    f"active={esp32.active_body}"
                 )
 
             if (
@@ -1341,24 +1330,27 @@ def main() -> None:
                 % SAVE_IMAGE_EVERY_N_LOOPS
                 == 0
             ):
+                output_frame = frame.copy()
+
                 draw_result(
-                    frame,
+                    output_frame,
                     face,
                     esp32,
                     horizontal_state,
                     vertical_state,
-                    light_on,
                     distance_state,
                     distance_ratio,
                     distance_action,
+                    light_on,
+                    consecutive_distance_pulses,
                 )
 
                 cv2.imwrite(
                     str(RESULT_IMAGE_PATH),
-                    frame,
+                    output_frame,
                 )
 
-            if SHOW_PREVIEW_WINDOW:
+            if preview_enabled:
                 preview_frame = frame.copy()
 
                 draw_result(
@@ -1367,10 +1359,11 @@ def main() -> None:
                     esp32,
                     horizontal_state,
                     vertical_state,
-                    light_on,
                     distance_state,
                     distance_ratio,
                     distance_action,
+                    light_on,
+                    consecutive_distance_pulses,
                 )
 
                 cv2.imshow(
@@ -1381,15 +1374,10 @@ def main() -> None:
                 key = cv2.waitKey(1) & 0xFF
 
                 if key in (ord("q"), 27):
-                    print(
-                        "[Main] Preview key exit."
-                    )
                     break
 
             if esp32.fault:
-                print(
-                    "[Safety] ESP32 fault detected."
-                )
+                print("[Safety] ESP32 fault detected.")
                 break
 
             elapsed = (
@@ -1421,7 +1409,6 @@ def main() -> None:
             time.sleep(0.15)
             esp32.send("HEAD_CENTER")
             esp32.send("LIGHT_OFF")
-
         except Exception as error:
             print(
                 "[Safety] 終了処理失敗: "
@@ -1431,7 +1418,7 @@ def main() -> None:
         esp32.close()
         cap.release()
 
-        if SHOW_PREVIEW_WINDOW:
+        if preview_enabled:
             cv2.destroyAllWindows()
 
         print("[Main] Finished.")
