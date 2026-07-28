@@ -4,10 +4,6 @@
 #include "motion_library.h"
 
 
-// =====================================================
-// 歩行状態
-// =====================================================
-
 enum WalkingState {
   WALK_IDLE,
   WALK_STAND,
@@ -17,7 +13,9 @@ enum WalkingState {
   WALK_TURN_LEFT,
   WALK_TURN_RIGHT,
   WALK_TRACK_LEFT,
-  WALK_TRACK_RIGHT
+  WALK_TRACK_RIGHT,
+  WALK_TRACK_FORWARD,
+  WALK_TRACK_BACKWARD
 };
 
 static WalkingState walkingState = WALK_IDLE;
@@ -25,10 +23,6 @@ static WalkingState walkingState = WALK_IDLE;
 static int remainingForwardSteps = 0;
 static bool stopRequested = false;
 
-
-// =====================================================
-// 内部関数
-// =====================================================
 
 static void setWalkingState(
   WalkingState state
@@ -44,6 +38,14 @@ static bool isTrackingTurnState() {
   return (
     walkingState == WALK_TRACK_LEFT
     || walkingState == WALK_TRACK_RIGHT
+  );
+}
+
+
+static bool isDistancePulseState() {
+  return (
+    walkingState == WALK_TRACK_FORWARD
+    || walkingState == WALK_TRACK_BACKWARD
   );
 }
 
@@ -78,63 +80,75 @@ static void playStopWalkMotion() {
 
 static void playTurnLeftMotion() {
   setWalkingState(WALK_TURN_LEFT);
-
   Serial.println("[Walking] Direction=LEFT");
   Serial.println("[Walking] TurnMode=MANUAL_V7");
   Serial.println(
     "[Walking] Motion="
     "TURN_LEFT_V7_TWO_STAGE_RECENTER"
   );
-
   playMotion(getTurnLeftMotion());
 }
 
 
 static void playTurnRightMotion() {
   setWalkingState(WALK_TURN_RIGHT);
-
   Serial.println("[Walking] Direction=RIGHT");
   Serial.println("[Walking] TurnMode=MANUAL_V7");
   Serial.println(
     "[Walking] Motion="
     "TURN_RIGHT_V7_RIGHT_FOOT_LIFT_BOOST"
   );
-
   playMotion(getTurnRightMotion());
 }
 
 
 static void playTrackLeftMotion() {
   setWalkingState(WALK_TRACK_LEFT);
-
   Serial.println("[Walking] Direction=LEFT");
   Serial.println("[Walking] TurnMode=AUTO_MICRO_V8");
-  Serial.println("[Walking] Interruptible=YES");
+  Serial.println("[Walking] Interruptible=IMMEDIATE");
   Serial.println(
     "[Walking] Motion=TRACK_LEFT_V8_MICRO"
   );
-
   playMotion(getTrackLeftMotion());
 }
 
 
 static void playTrackRightMotion() {
   setWalkingState(WALK_TRACK_RIGHT);
-
   Serial.println("[Walking] Direction=RIGHT");
   Serial.println("[Walking] TurnMode=AUTO_MICRO_V8");
-  Serial.println("[Walking] Interruptible=YES");
+  Serial.println("[Walking] Interruptible=IMMEDIATE");
   Serial.println(
     "[Walking] Motion=TRACK_RIGHT_V8_MICRO"
   );
-
   playMotion(getTrackRightMotion());
 }
 
 
-// =====================================================
-// 公開関数
-// =====================================================
+static void playTrackForwardMotion() {
+  setWalkingState(WALK_TRACK_FORWARD);
+  Serial.println("[Walking] Direction=FORWARD");
+  Serial.println("[Walking] DistanceMode=AUTO_MICRO_V8_3");
+  Serial.println("[Walking] Interruptible=AFTER_CURRENT_PULSE");
+  Serial.println(
+    "[Walking] Motion=TRACK_FORWARD_V8_3_MICRO"
+  );
+  playMotion(getTrackForwardMotion());
+}
+
+
+static void playTrackBackwardMotion() {
+  setWalkingState(WALK_TRACK_BACKWARD);
+  Serial.println("[Walking] Direction=BACKWARD");
+  Serial.println("[Walking] DistanceMode=AUTO_MICRO_V8_3");
+  Serial.println("[Walking] Interruptible=AFTER_CURRENT_PULSE");
+  Serial.println(
+    "[Walking] Motion=TRACK_BACKWARD_V8_3_MICRO"
+  );
+  playMotion(getTrackBackwardMotion());
+}
+
 
 void initWalking() {
   walkingState = WALK_IDLE;
@@ -151,13 +165,16 @@ void initWalking() {
     "V8_MICRO_CENTER_STOP"
   );
   Serial.println(
+    "[Walking] DistanceMoveVersion="
+    "V8_3_MICRO_FORWARD_BACKWARD"
+  );
+  Serial.println(
     "[Walking] CommandInversion=DISABLED"
   );
 }
 
 
 void updateWalking() {
-  // MotionPlayerはここでだけ進める。
   updateMotionPlayer();
 
   if (isMotionPlaying()) {
@@ -166,6 +183,7 @@ void updateWalking() {
 
   switch (walkingState) {
     case WALK_STAND:
+      stopRequested = false;
       setWalkingState(WALK_IDLE);
       break;
 
@@ -225,6 +243,22 @@ void updateWalking() {
       setWalkingState(WALK_IDLE);
       break;
 
+    case WALK_TRACK_FORWARD:
+      Serial.println(
+        "[Walking] TRACK_FORWARD pulse finished."
+      );
+      stopRequested = false;
+      playStandMotion();
+      break;
+
+    case WALK_TRACK_BACKWARD:
+      Serial.println(
+        "[Walking] TRACK_BACKWARD pulse finished."
+      );
+      stopRequested = false;
+      playStandMotion();
+      break;
+
     case WALK_IDLE:
     default:
       break;
@@ -282,8 +316,7 @@ void walkForwardOnce() {
 void stopWalking() {
   Serial.println("[Walking] Stop requested.");
 
-  // 自動追従の小刻み旋回だけは、顔が中央へ来た時点で
-  // モーションを直ちに止め、現在角度からSTANDへ戻す。
+  // 左右の自動旋回は、中央到達時に直ちに止める。
   if (
     isMotionPlaying()
     && isTrackingTurnState()
@@ -301,14 +334,27 @@ void stopWalking() {
     return;
   }
 
-  // 手動V7旋回や歩行は転倒防止のため途中中断しない。
+  // 距離移動は転倒を避けるため、現在の短い1パルスを
+  // 最後まで終えてからSTANDへ戻す。
+  if (
+    isMotionPlaying()
+    && isDistancePulseState()
+  ) {
+    Serial.println(
+      "[Walking] Distance stop queued."
+    );
+
+    stopRequested = true;
+    remainingForwardSteps = 0;
+    return;
+  }
+
   if (isMotionPlaying()) {
     stopRequested = true;
     remainingForwardSteps = 0;
     return;
   }
 
-  // 待機状態では不要な停止モーションを開始しない。
   if (walkingState == WALK_IDLE) {
     stopRequested = false;
     remainingForwardSteps = 0;
@@ -336,7 +382,6 @@ void turnLeft() {
 
   stopRequested = false;
   remainingForwardSteps = 0;
-
   Serial.println("[Walking] turnLeft() accepted.");
   playTurnLeftMotion();
 }
@@ -355,7 +400,6 @@ void turnRight() {
 
   stopRequested = false;
   remainingForwardSteps = 0;
-
   Serial.println("[Walking] turnRight() accepted.");
   playTurnRightMotion();
 }
@@ -374,7 +418,6 @@ void trackLeft() {
 
   stopRequested = false;
   remainingForwardSteps = 0;
-
   Serial.println("[Walking] trackLeft() accepted.");
   playTrackLeftMotion();
 }
@@ -393,9 +436,44 @@ void trackRight() {
 
   stopRequested = false;
   remainingForwardSteps = 0;
-
   Serial.println("[Walking] trackRight() accepted.");
   playTrackRightMotion();
+}
+
+
+void trackForward() {
+  if (
+    isMotionPlaying()
+    || walkingState != WALK_IDLE
+  ) {
+    Serial.println(
+      "[Walking] Busy. Cannot track forward."
+    );
+    return;
+  }
+
+  stopRequested = false;
+  remainingForwardSteps = 0;
+  Serial.println("[Walking] trackForward() accepted.");
+  playTrackForwardMotion();
+}
+
+
+void trackBackward() {
+  if (
+    isMotionPlaying()
+    || walkingState != WALK_IDLE
+  ) {
+    Serial.println(
+      "[Walking] Busy. Cannot track backward."
+    );
+    return;
+  }
+
+  stopRequested = false;
+  remainingForwardSteps = 0;
+  Serial.println("[Walking] trackBackward() accepted.");
+  playTrackBackwardMotion();
 }
 
 
@@ -435,6 +513,12 @@ const char* getWalkingStateName() {
 
     case WALK_TRACK_RIGHT:
       return "TRACK_RIGHT";
+
+    case WALK_TRACK_FORWARD:
+      return "TRACK_FORWARD";
+
+    case WALK_TRACK_BACKWARD:
+      return "TRACK_BACKWARD";
 
     default:
       return "UNKNOWN";

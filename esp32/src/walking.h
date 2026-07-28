@@ -13,13 +13,14 @@ void walkForwardOnce();
 
 void stopWalking();
 
-// 手動用の大きい旋回
 void turnLeft();
 void turnRight();
 
-// 自動追従用の小刻み旋回
 void trackLeft();
 void trackRight();
+
+void trackForward();
+void trackBackward();
 
 bool isWalkingBusy();
 const char* getWalkingStateName();

@@ -21,7 +21,7 @@ void setup() {
     "Presentation Escort ESP32"
   );
   Serial.println(
-    "V8 Auto Follow Micro Turn"
+    "V8.3 Distance Movement"
   );
   Serial.println(
     "========================================"
@@ -39,13 +39,11 @@ void setup() {
 
 
 void loop() {
-  // シリアル受信
   updateSerialReceive();
 
-  // updateWalking()内部でMotionPlayerも1回だけ更新する。
+  // updateWalking()内部でMotionPlayerも更新する。
   updateWalking();
 
-  // 頭サーボ
   updateHeadControl();
 
   delay(1);

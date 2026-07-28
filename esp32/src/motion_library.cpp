@@ -847,6 +847,285 @@ static const MotionData trackRightMotion = {
   sizeof(trackRightSteps) / sizeof(MotionStep)
 };
 
+
+// =====================================================
+// 距離追従用・小刻み前進／後退 V8.3
+// =====================================================
+//
+// TRACK_FORWARD / TRACK_BACKWARDは、距離確認用の短い1パルス。
+// 連続歩行にはせず、1回終了するたびにRaspberry Pi側で
+// 顔の大きさを再判定する。
+//
+// 後退は前進に対して腰サーボの振り方向を反転している。
+// 初回は必ずロボットを手で支え、実機方向を確認する。
+// =====================================================
+
+static constexpr double DISTANCE_LEG_SHIFT_ANGLE = 8.0;
+static constexpr double DISTANCE_HIP_SWING_ANGLE = 11.0;
+
+static constexpr int DISTANCE_CENTER_DURATION_MS = 250;
+static constexpr int DISTANCE_LEG_DURATION_MS = 300;
+static constexpr int DISTANCE_HIP_DURATION_MS = 350;
+static constexpr int DISTANCE_RETURN_DURATION_MS = 350;
+static constexpr int DISTANCE_HOLD_DURATION_MS = 250;
+
+static constexpr int DISTANCE_WAIT_AFTER_CENTER_MS = 350;
+static constexpr int DISTANCE_WAIT_AFTER_LEG_MS = 450;
+static constexpr int DISTANCE_WAIT_AFTER_HIP_MS = 500;
+static constexpr int DISTANCE_WAIT_AFTER_RETURN_MS = 500;
+
+
+// -----------------------------------------------------
+// 小刻み前進
+// -----------------------------------------------------
+
+static const MotionStep trackForwardSteps[] = {
+  // Phase 0: 中央姿勢。
+  { 0, CH_LEFT_HIP,  NEUTRAL_ANGLE, DISTANCE_CENTER_DURATION_MS },
+  { 0, CH_RIGHT_HIP, NEUTRAL_ANGLE, DISTANCE_CENTER_DURATION_MS },
+  { 0, CH_LEFT_LEG,  NEUTRAL_ANGLE, DISTANCE_CENTER_DURATION_MS },
+  { 0, CH_RIGHT_LEG, NEUTRAL_ANGLE, DISTANCE_CENTER_DURATION_MS },
+
+  // Phase 1: 一方向へ体重移動。
+  {
+    DISTANCE_WAIT_AFTER_CENTER_MS,
+    CH_LEFT_LEG,
+    -DISTANCE_LEG_SHIFT_ANGLE,
+    DISTANCE_LEG_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    -DISTANCE_LEG_SHIFT_ANGLE,
+    DISTANCE_LEG_DURATION_MS
+  },
+
+  // Phase 2: 腰を前進方向へ小さく振る。
+  {
+    DISTANCE_WAIT_AFTER_LEG_MS,
+    CH_LEFT_HIP,
+    -DISTANCE_HIP_SWING_ANGLE,
+    DISTANCE_HIP_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    -DISTANCE_HIP_SWING_ANGLE,
+    DISTANCE_HIP_DURATION_MS
+  },
+
+  // Phase 3: 脚を中央へ戻す。
+  {
+    DISTANCE_WAIT_AFTER_HIP_MS,
+    CH_LEFT_LEG,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+
+  // Phase 4: 反対方向へ体重移動。
+  {
+    DISTANCE_WAIT_AFTER_RETURN_MS,
+    CH_LEFT_LEG,
+    DISTANCE_LEG_SHIFT_ANGLE,
+    DISTANCE_LEG_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    DISTANCE_LEG_SHIFT_ANGLE,
+    DISTANCE_LEG_DURATION_MS
+  },
+
+  // Phase 5: 反対側の前進ストローク。
+  {
+    DISTANCE_WAIT_AFTER_LEG_MS,
+    CH_LEFT_HIP,
+    DISTANCE_HIP_SWING_ANGLE,
+    DISTANCE_HIP_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    DISTANCE_HIP_SWING_ANGLE,
+    DISTANCE_HIP_DURATION_MS
+  },
+
+  // Phase 6: 全軸を中央へ戻す。
+  {
+    DISTANCE_WAIT_AFTER_HIP_MS,
+    CH_LEFT_LEG,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+  {
+    DISTANCE_WAIT_AFTER_RETURN_MS,
+    CH_LEFT_HIP,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+
+  // Phase 7: 中央姿勢を保持。
+  {
+    DISTANCE_WAIT_AFTER_RETURN_MS,
+    CH_LEFT_HIP,
+    NEUTRAL_ANGLE,
+    DISTANCE_HOLD_DURATION_MS
+  },
+  { 0, CH_RIGHT_HIP, NEUTRAL_ANGLE, DISTANCE_HOLD_DURATION_MS },
+  { 0, CH_LEFT_LEG,  NEUTRAL_ANGLE, DISTANCE_HOLD_DURATION_MS },
+  { 0, CH_RIGHT_LEG, NEUTRAL_ANGLE, DISTANCE_HOLD_DURATION_MS }
+};
+
+static const MotionData trackForwardMotion = {
+  "TRACK_FORWARD_V8_3_MICRO",
+  trackForwardSteps,
+  sizeof(trackForwardSteps) / sizeof(MotionStep)
+};
+
+
+// -----------------------------------------------------
+// 小刻み後退
+// -----------------------------------------------------
+
+static const MotionStep trackBackwardSteps[] = {
+  // Phase 0: 中央姿勢。
+  { 0, CH_LEFT_HIP,  NEUTRAL_ANGLE, DISTANCE_CENTER_DURATION_MS },
+  { 0, CH_RIGHT_HIP, NEUTRAL_ANGLE, DISTANCE_CENTER_DURATION_MS },
+  { 0, CH_LEFT_LEG,  NEUTRAL_ANGLE, DISTANCE_CENTER_DURATION_MS },
+  { 0, CH_RIGHT_LEG, NEUTRAL_ANGLE, DISTANCE_CENTER_DURATION_MS },
+
+  // Phase 1: 一方向へ体重移動。
+  {
+    DISTANCE_WAIT_AFTER_CENTER_MS,
+    CH_LEFT_LEG,
+    -DISTANCE_LEG_SHIFT_ANGLE,
+    DISTANCE_LEG_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    -DISTANCE_LEG_SHIFT_ANGLE,
+    DISTANCE_LEG_DURATION_MS
+  },
+
+  // Phase 2: 前進とは逆方向へ腰を振る。
+  {
+    DISTANCE_WAIT_AFTER_LEG_MS,
+    CH_LEFT_HIP,
+    DISTANCE_HIP_SWING_ANGLE,
+    DISTANCE_HIP_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    DISTANCE_HIP_SWING_ANGLE,
+    DISTANCE_HIP_DURATION_MS
+  },
+
+  // Phase 3: 脚を中央へ戻す。
+  {
+    DISTANCE_WAIT_AFTER_HIP_MS,
+    CH_LEFT_LEG,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+
+  // Phase 4: 反対方向へ体重移動。
+  {
+    DISTANCE_WAIT_AFTER_RETURN_MS,
+    CH_LEFT_LEG,
+    DISTANCE_LEG_SHIFT_ANGLE,
+    DISTANCE_LEG_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    DISTANCE_LEG_SHIFT_ANGLE,
+    DISTANCE_LEG_DURATION_MS
+  },
+
+  // Phase 5: 反対側の後退ストローク。
+  {
+    DISTANCE_WAIT_AFTER_LEG_MS,
+    CH_LEFT_HIP,
+    -DISTANCE_HIP_SWING_ANGLE,
+    DISTANCE_HIP_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    -DISTANCE_HIP_SWING_ANGLE,
+    DISTANCE_HIP_DURATION_MS
+  },
+
+  // Phase 6: 全軸を中央へ戻す。
+  {
+    DISTANCE_WAIT_AFTER_HIP_MS,
+    CH_LEFT_LEG,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_LEG,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+  {
+    DISTANCE_WAIT_AFTER_RETURN_MS,
+    CH_LEFT_HIP,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+  {
+    0,
+    CH_RIGHT_HIP,
+    NEUTRAL_ANGLE,
+    DISTANCE_RETURN_DURATION_MS
+  },
+
+  // Phase 7: 中央姿勢を保持。
+  {
+    DISTANCE_WAIT_AFTER_RETURN_MS,
+    CH_LEFT_HIP,
+    NEUTRAL_ANGLE,
+    DISTANCE_HOLD_DURATION_MS
+  },
+  { 0, CH_RIGHT_HIP, NEUTRAL_ANGLE, DISTANCE_HOLD_DURATION_MS },
+  { 0, CH_LEFT_LEG,  NEUTRAL_ANGLE, DISTANCE_HOLD_DURATION_MS },
+  { 0, CH_RIGHT_LEG, NEUTRAL_ANGLE, DISTANCE_HOLD_DURATION_MS }
+};
+
+static const MotionData trackBackwardMotion = {
+  "TRACK_BACKWARD_V8_3_MICRO",
+  trackBackwardSteps,
+  sizeof(trackBackwardSteps) / sizeof(MotionStep)
+};
+
 // =====================================================
 // getter
 // =====================================================
@@ -881,4 +1160,12 @@ const MotionData& getTrackLeftMotion() {
 
 const MotionData& getTrackRightMotion() {
   return trackRightMotion;
+}
+
+const MotionData& getTrackForwardMotion() {
+  return trackForwardMotion;
+}
+
+const MotionData& getTrackBackwardMotion() {
+  return trackBackwardMotion;
 }

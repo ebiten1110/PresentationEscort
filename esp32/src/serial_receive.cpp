@@ -10,10 +10,6 @@ static String inputBuffer = "";
 static String lastCommand = "";
 
 
-// =====================================================
-// 内部関数
-// =====================================================
-
 static String normalizeCommand(
   String command
 ) {
@@ -44,12 +40,12 @@ static void printStatus() {
   Serial.print("Last Command: ");
   Serial.println(lastCommand);
 
-  Serial.println(
-    "Manual Turn: V7"
-  );
-
+  Serial.println("Manual Turn: V7");
   Serial.println(
     "Auto Track Turn: V8_MICRO_CENTER_STOP"
+  );
+  Serial.println(
+    "Distance Move: V8_3_MICRO_FORWARD_BACKWARD"
   );
 
   Serial.println(
@@ -73,6 +69,11 @@ void printCommandHelp() {
   Serial.println(
     "TRACK_LEFT / TRACK_RIGHT : "
     "interruptible micro turn"
+  );
+
+  Serial.println(
+    "TRACK_FORWARD / TRACK_BACKWARD : "
+    "distance movement pulse"
   );
 
   Serial.println("STOP");
@@ -111,8 +112,6 @@ static void executeCommand(
   );
   Serial.println(command);
 
-
-  // 短縮コマンド
   if (command == "W") {
     command = CMD_FORWARD;
   }
@@ -147,8 +146,6 @@ static void executeCommand(
     command = CMD_LIGHT_TOGGLE;
   }
 
-
-  // 歩行・旋回
   if (command == CMD_STAND) {
     stand();
   }
@@ -167,11 +164,16 @@ static void executeCommand(
   else if (command == CMD_TRACK_RIGHT) {
     trackRight();
   }
+  else if (command == CMD_TRACK_FORWARD) {
+    trackForward();
+  }
+  else if (command == CMD_TRACK_BACKWARD) {
+    trackBackward();
+  }
   else if (command == CMD_STOP) {
     stopWalking();
   }
 
-  // 状態
   else if (command == CMD_STATUS) {
     printStatus();
   }
@@ -179,7 +181,6 @@ static void executeCommand(
     printCommandHelp();
   }
 
-  // ライト
   else if (command == CMD_LIGHT_ON) {
     lightOn();
   }
@@ -190,7 +191,6 @@ static void executeCommand(
     lightToggle();
   }
 
-  // モード
   else if (
     command == CMD_FOLLOW
     || command == CMD_FIX
@@ -202,7 +202,6 @@ static void executeCommand(
     );
   }
 
-  // 頭
   else if (command == CMD_HEAD_LEFT) {
     headLeft();
   }
@@ -227,10 +226,6 @@ static void executeCommand(
   }
 }
 
-
-// =====================================================
-// 公開関数
-// =====================================================
 
 void initSerialReceive() {
   inputBuffer = "";
