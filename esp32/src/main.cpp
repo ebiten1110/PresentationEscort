@@ -21,7 +21,7 @@ void setup() {
     "Presentation Escort ESP32"
   );
   Serial.println(
-    "V8.3 Distance Movement"
+    "V8.4C GPIO RGB LED x3"
   );
   Serial.println(
     "========================================"
@@ -45,6 +45,9 @@ void loop() {
   updateWalking();
 
   updateHeadControl();
+
+  // 赤点滅をdelayなしで進める。
+  updateLightControl();
 
   delay(1);
 }

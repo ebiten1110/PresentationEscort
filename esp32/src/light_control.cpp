@@ -4,96 +4,327 @@
 
 
 // ============================================================
-// LED設定
+// 4本足RGB LED ×3 設定
+// ============================================================
+//
+// 3個とも同じ色で同期点灯するため、
+// 同じ色の端子をそれぞれ抵抗経由で同じGPIOへ接続する。
+//
+// LED1 R -- 330Ω --+
+// LED2 R -- 330Ω --+--> GPIO25
+// LED3 R -- 330Ω --+
+//
+// LED1 G -- 330Ω --+
+// LED2 G -- 330Ω --+--> GPIO26
+// LED3 G -- 330Ω --+
+//
+// LED1 B -- 330Ω --+
+// LED2 B -- 330Ω --+--> GPIO27
+//
+// 抵抗はLEDごと・色ごとに必要。合計9本。
 // ============================================================
 
-// 白色LEDを接続しているESP32のGPIO
-static const uint8_t LIGHT_PIN = 25;
+static constexpr uint8_t RGB_RED_PIN = 25;
+static constexpr uint8_t RGB_GREEN_PIN = 26;
+static constexpr uint8_t RGB_BLUE_PIN = 27;
 
-// 現在の点灯状態
-static bool lightEnabled = false;
+
+// ============================================================
+// LED種類
+// ============================================================
+//
+// 共通カソード:
+//   共通端子をGNDへ接続。
+//   RGB_COMMON_ANODE = false
+//
+// 共通アノード:
+//   共通端子を3.3Vへ接続。
+//   RGB_COMMON_ANODE = true
+//
+// 授業資料のLEDは共通カソード型。
+// ============================================================
+
+static constexpr bool RGB_COMMON_ANODE = false;
+
+
+// ============================================================
+// 点滅設定
+// ============================================================
+
+static constexpr unsigned long ERROR_BLINK_INTERVAL_MS = 300;
+
+
+// ============================================================
+// 状態
+// ============================================================
+
+static LightMode currentMode = LightMode::OFF;
+
+static bool errorBlinkVisible = false;
+static unsigned long lastBlinkTimeMs = 0;
 
 
 // ============================================================
 // 内部関数
 // ============================================================
 
-static void applyLightState() {
-    digitalWrite(
-        LIGHT_PIN,
-        lightEnabled ? HIGH : LOW
-    );
+static void writeColorChannel(
+  uint8_t pin,
+  bool enabled
+) {
+  bool outputHigh = enabled;
 
-    Serial.print("[LightControl] state=");
-    Serial.println(
-        lightEnabled ? "ON" : "OFF"
-    );
+  if (RGB_COMMON_ANODE) {
+    outputHigh = !enabled;
+  }
+
+  digitalWrite(
+    pin,
+    outputHigh ? HIGH : LOW
+  );
+}
+
+
+static void showColor(
+  bool red,
+  bool green,
+  bool blue
+) {
+  writeColorChannel(
+    RGB_RED_PIN,
+    red
+  );
+
+  writeColorChannel(
+    RGB_GREEN_PIN,
+    green
+  );
+
+  writeColorChannel(
+    RGB_BLUE_PIN,
+    blue
+  );
+}
+
+
+static void applyCurrentMode() {
+  switch (currentMode) {
+    case LightMode::OFF:
+      showColor(false, false, false);
+      break;
+
+    case LightMode::WHITE:
+      showColor(true, true, true);
+      break;
+
+    case LightMode::RED:
+      showColor(true, false, false);
+      break;
+
+    case LightMode::GREEN:
+      showColor(false, true, false);
+      break;
+
+    case LightMode::BLUE:
+      showColor(false, false, true);
+      break;
+
+    case LightMode::YELLOW:
+      showColor(true, true, false);
+      break;
+
+    case LightMode::PURPLE:
+      showColor(true, false, true);
+      break;
+
+    case LightMode::ERROR_BLINK:
+      showColor(
+        errorBlinkVisible,
+        false,
+        false
+      );
+      break;
+
+    default:
+      showColor(false, false, false);
+      break;
+  }
+
+  Serial.print("[LightControl] mode=");
+  Serial.println(getLightModeName());
 }
 
 
 // ============================================================
-// 初期化
+// 初期化・更新
 // ============================================================
 
 void initLightControl() {
-    pinMode(
-        LIGHT_PIN,
-        OUTPUT
-    );
+  pinMode(RGB_RED_PIN, OUTPUT);
+  pinMode(RGB_GREEN_PIN, OUTPUT);
+  pinMode(RGB_BLUE_PIN, OUTPUT);
 
-    lightEnabled = false;
-    applyLightState();
+  currentMode = LightMode::OFF;
+  errorBlinkVisible = false;
+  lastBlinkTimeMs = millis();
 
-    Serial.println(
-        "[LightControl] Initialized"
-    );
+  applyCurrentMode();
+
+  Serial.println(
+    "[LightControl] 4-pin common-cathode RGB LED x3 initialized."
+  );
+
+  Serial.print(
+    "[LightControl] pins R/G/B="
+  );
+  Serial.print(RGB_RED_PIN);
+  Serial.print("/");
+  Serial.print(RGB_GREEN_PIN);
+  Serial.print("/");
+  Serial.println(RGB_BLUE_PIN);
+
+  Serial.print(
+    "[LightControl] common=CATHODE fixed, detected="
+  );
+  Serial.println(
+    RGB_COMMON_ANODE
+      ? "ANODE"
+      : "CATHODE"
+  );
+}
+
+
+void updateLightControl() {
+  if (
+    currentMode
+    != LightMode::ERROR_BLINK
+  ) {
+    return;
+  }
+
+  const unsigned long nowMs = millis();
+
+  if (
+    nowMs - lastBlinkTimeMs
+    < ERROR_BLINK_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  lastBlinkTimeMs = nowMs;
+  errorBlinkVisible = !errorBlinkVisible;
+
+  applyCurrentMode();
 }
 
 
 // ============================================================
-// 点灯・消灯
+// モード設定
 // ============================================================
 
-void lightOn() {
-    lightEnabled = true;
-    applyLightState();
+void setLightMode(LightMode mode) {
+  if (currentMode == mode) {
+    return;
+  }
+
+  currentMode = mode;
+
+  if (
+    currentMode
+    == LightMode::ERROR_BLINK
+  ) {
+    errorBlinkVisible = true;
+    lastBlinkTimeMs = millis();
+  }
+  else {
+    errorBlinkVisible = false;
+  }
+
+  applyCurrentMode();
 }
 
 
 void lightOff() {
-    lightEnabled = false;
-    applyLightState();
+  setLightMode(LightMode::OFF);
+}
+
+
+void lightWhite() {
+  setLightMode(LightMode::WHITE);
+}
+
+
+void lightRed() {
+  setLightMode(LightMode::RED);
+}
+
+
+void lightGreen() {
+  setLightMode(LightMode::GREEN);
+}
+
+
+void lightBlue() {
+  setLightMode(LightMode::BLUE);
+}
+
+
+void lightYellow() {
+  setLightMode(LightMode::YELLOW);
+}
+
+
+void lightPurple() {
+  setLightMode(LightMode::PURPLE);
+}
+
+
+void lightError() {
+  setLightMode(LightMode::ERROR_BLINK);
+}
+
+
+// ============================================================
+// 既存コードとの互換
+// ============================================================
+
+void lightOn() {
+  lightWhite();
 }
 
 
 void lightToggle() {
-    lightEnabled = !lightEnabled;
-    applyLightState();
+  if (isLightOn()) {
+    lightOff();
+  }
+  else {
+    lightWhite();
+  }
 }
 
 
-// ============================================================
-// 既存コードとの互換用関数
-// ============================================================
-
 void toggleLight() {
-    lightToggle();
+  lightToggle();
 }
 
 
 void turnLightOn() {
-    lightOn();
+  lightOn();
 }
 
 
 void turnLightOff() {
-    lightOff();
+  lightOff();
 }
 
 
 void setLight(bool enabled) {
-    lightEnabled = enabled;
-    applyLightState();
+  if (enabled) {
+    lightWhite();
+  }
+  else {
+    lightOff();
+  }
 }
 
 
@@ -102,10 +333,47 @@ void setLight(bool enabled) {
 // ============================================================
 
 bool isLightOn() {
-    return lightEnabled;
+  return currentMode != LightMode::OFF;
 }
 
 
 bool getLightState() {
-    return lightEnabled;
+  return isLightOn();
+}
+
+
+LightMode getLightMode() {
+  return currentMode;
+}
+
+
+const char* getLightModeName() {
+  switch (currentMode) {
+    case LightMode::OFF:
+      return "OFF";
+
+    case LightMode::WHITE:
+      return "WHITE";
+
+    case LightMode::RED:
+      return "RED";
+
+    case LightMode::GREEN:
+      return "GREEN";
+
+    case LightMode::BLUE:
+      return "BLUE";
+
+    case LightMode::YELLOW:
+      return "YELLOW";
+
+    case LightMode::PURPLE:
+      return "PURPLE";
+
+    case LightMode::ERROR_BLINK:
+      return "ERROR_BLINK";
+
+    default:
+      return "UNKNOWN";
+  }
 }

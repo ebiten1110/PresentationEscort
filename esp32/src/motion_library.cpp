@@ -48,13 +48,13 @@ static constexpr double NEUTRAL_ANGLE = 0.0;
 //   浮かす = 左
 // =====================================================
 
-static constexpr double LEFT_FIRST_SHIFT_ANGLE = 18.0;
+static constexpr double LEFT_FIRST_SHIFT_ANGLE = 14.0;
 
 static constexpr double LEFT_SUPPORT_HIP_ANGLE = 5.0;
 static constexpr double LEFT_SWING_HIP_ANGLE = -38.0;
 
 // 右足を着地した後、右足へ体重を移して左足を浮かせる。
-static constexpr double LEFT_RECENTER_SHIFT_ANGLE = -12.0;
+static constexpr double LEFT_RECENTER_SHIFT_ANGLE = -14.0;
 
 
 // =====================================================
@@ -70,16 +70,16 @@ static constexpr double LEFT_RECENTER_SHIFT_ANGLE = -12.0;
 //   浮かす = 右
 // =====================================================
 
-static constexpr double RIGHT_FIRST_SHIFT_ANGLE = -12.0;
+static constexpr double RIGHT_FIRST_SHIFT_ANGLE = 12.0;
 
-static constexpr double RIGHT_SWING_HIP_ANGLE = 24.0;
-static constexpr double RIGHT_SUPPORT_HIP_ANGLE = -7.0;
+static constexpr double RIGHT_SWING_HIP_ANGLE = -38.0;
+static constexpr double RIGHT_SUPPORT_HIP_ANGLE = 5.0;
 
 // 左足を着地した後、左足へ体重を移して右足を浮かせる。
 // V6の+12度では右足が上がり切らなかったため、
 // +14度から+22度へ二段階で持ち上げる。
 static constexpr double RIGHT_RECENTER_SHIFT_STAGE1_ANGLE = 14.0;
-static constexpr double RIGHT_RECENTER_SHIFT_STAGE2_ANGLE = 22.0;
+static constexpr double RIGHT_RECENTER_SHIFT_STAGE2_ANGLE = 0.0;
 
 // 腰を戻した後、右足をいきなり下ろさず、
 // 一度+8度まで下げてから0度へ戻す。

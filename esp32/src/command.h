@@ -12,9 +12,20 @@
 #define CMD_TRACK_FORWARD  "TRACK_FORWARD"
 #define CMD_TRACK_BACKWARD "TRACK_BACKWARD"
 
+// 既存ライトコマンド
 #define CMD_LIGHT_ON       "LIGHT_ON"
 #define CMD_LIGHT_OFF      "LIGHT_OFF"
 #define CMD_LIGHT_TOGGLE   "LIGHT_TOGGLE"
+
+// WS2812BフルカラーLEDコマンド
+#define CMD_RGB_OFF        "RGB_OFF"
+#define CMD_RGB_WHITE      "RGB_WHITE"
+#define CMD_RGB_RED        "RGB_RED"
+#define CMD_RGB_GREEN      "RGB_GREEN"
+#define CMD_RGB_BLUE       "RGB_BLUE"
+#define CMD_RGB_YELLOW     "RGB_YELLOW"
+#define CMD_RGB_PURPLE     "RGB_PURPLE"
+#define CMD_RGB_ERROR      "RGB_ERROR"
 
 #define CMD_FOLLOW         "FOLLOW"
 #define CMD_FIX            "FIX"

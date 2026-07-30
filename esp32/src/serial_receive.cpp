@@ -32,20 +32,25 @@ static void printStatus() {
     isWalkingBusy() ? "YES" : "NO"
   );
 
-  Serial.print("Light: ");
-  Serial.println(
-    isLightOn() ? "ON" : "OFF"
-  );
+  Serial.print("RGB Light: ");
+  Serial.println(getLightModeName());
 
   Serial.print("Last Command: ");
   Serial.println(lastCommand);
 
   Serial.println("Manual Turn: V7");
+
   Serial.println(
     "Auto Track Turn: V8_MICRO_CENTER_STOP"
   );
+
   Serial.println(
-    "Distance Move: V8_3_MICRO_FORWARD_BACKWARD"
+    "Distance Move: "
+    "V8_3_MICRO_FORWARD_BACKWARD"
+  );
+
+  Serial.println(
+    "RGB Light: V8_4_WS2812B_3PIXELS"
   );
 
   Serial.println(
@@ -86,9 +91,19 @@ void printCommandHelp() {
   Serial.println("HEAD_DOWN");
   Serial.println("HEAD_CENTER");
 
-  Serial.println("LIGHT_ON");
-  Serial.println("LIGHT_OFF");
-  Serial.println("LIGHT_TOGGLE");
+  Serial.println(
+    "LIGHT_ON / LIGHT_OFF / LIGHT_TOGGLE"
+  );
+
+  Serial.println(
+    "RGB_OFF / RGB_WHITE / RGB_RED"
+  );
+  Serial.println(
+    "RGB_GREEN / RGB_BLUE / RGB_YELLOW"
+  );
+  Serial.println(
+    "RGB_PURPLE / RGB_ERROR"
+  );
 
   Serial.println(
     "======================================="
@@ -112,6 +127,7 @@ static void executeCommand(
   );
   Serial.println(command);
 
+  // 短縮コマンド
   if (command == "W") {
     command = CMD_FORWARD;
   }
@@ -146,6 +162,8 @@ static void executeCommand(
     command = CMD_LIGHT_TOGGLE;
   }
 
+
+  // 歩行・旋回
   if (command == CMD_STAND) {
     stand();
   }
@@ -174,6 +192,7 @@ static void executeCommand(
     stopWalking();
   }
 
+  // 状態表示
   else if (command == CMD_STATUS) {
     printStatus();
   }
@@ -181,6 +200,7 @@ static void executeCommand(
     printCommandHelp();
   }
 
+  // 既存ライトコマンド
   else if (command == CMD_LIGHT_ON) {
     lightOn();
   }
@@ -191,6 +211,33 @@ static void executeCommand(
     lightToggle();
   }
 
+  // フルカラーLED
+  else if (command == CMD_RGB_OFF) {
+    lightOff();
+  }
+  else if (command == CMD_RGB_WHITE) {
+    lightWhite();
+  }
+  else if (command == CMD_RGB_RED) {
+    lightRed();
+  }
+  else if (command == CMD_RGB_GREEN) {
+    lightGreen();
+  }
+  else if (command == CMD_RGB_BLUE) {
+    lightBlue();
+  }
+  else if (command == CMD_RGB_YELLOW) {
+    lightYellow();
+  }
+  else if (command == CMD_RGB_PURPLE) {
+    lightPurple();
+  }
+  else if (command == CMD_RGB_ERROR) {
+    lightError();
+  }
+
+  // モード
   else if (
     command == CMD_FOLLOW
     || command == CMD_FIX
@@ -202,6 +249,7 @@ static void executeCommand(
     );
   }
 
+  // 頭
   else if (command == CMD_HEAD_LEFT) {
     headLeft();
   }
