@@ -7,25 +7,15 @@
 #include "head_control.h"
 #include "light_control.h"
 
-
 void setup() {
   Serial.begin(115200);
-
   delay(300);
 
   Serial.println();
-  Serial.println(
-    "========================================"
-  );
-  Serial.println(
-    "Presentation Escort ESP32"
-  );
-  Serial.println(
-    "V8.4C GPIO RGB LED x3"
-  );
-  Serial.println(
-    "========================================"
-  );
+  Serial.println("========================================");
+  Serial.println("Presentation Escort ESP32");
+  Serial.println("V8.8 DUAL LOOP CAMERA BODY");
+  Serial.println("========================================");
 
   initServoControl();
   initMotionPlayer();
@@ -37,17 +27,10 @@ void setup() {
   Serial.println("[Main] Setup complete");
 }
 
-
 void loop() {
   updateSerialReceive();
-
-  // updateWalking()内部でMotionPlayerも更新する。
   updateWalking();
-
   updateHeadControl();
-
-  // 赤点滅をdelayなしで進める。
   updateLightControl();
-
   delay(1);
 }
