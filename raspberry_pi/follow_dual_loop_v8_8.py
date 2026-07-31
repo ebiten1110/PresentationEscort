@@ -1,5 +1,5 @@
 """
-Presentation Escort 自動追従 V8.8.2
+Presentation Escort 自動追従 V8.8.3
 
 機能:
 - 顔の左右位置に合わせてTRACK_LEFT / TRACK_RIGHT
@@ -17,7 +17,7 @@ Presentation Escort 自動追従 V8.8.2
 - 1パルス終了ごとに距離を再判定
 
 実行:
-    python3 follow_dual_loop_v8_8_2.py
+    python3 follow_dual_loop_v8_8_3.py
 """
 
 from __future__ import annotations
@@ -167,10 +167,66 @@ BODY_RESTART_COOLDOWN_SECONDS = 0.18
 BODY_POST_TURN_LOCKOUT_SECONDS = 0.55
 BODY_TURN_CONTINUE_WINDOW_SECONDS = 2.50
 
-# 現在の実機では、負方向のカメラ角に対してTRACK_RIGHT、
-# 正方向に対してTRACK_LEFTを送ると人物側へ旋回する。
-BODY_NEGATIVE_BEARING_COMMAND = "TRACK_RIGHT"
-BODY_POSITIVE_BEARING_COMMAND = "TRACK_LEFT"
+# ============================================================
+# 体旋回コマンドの物理方向
+# ============================================================
+#
+# V8.8.2でカメラ座標は正常になったが、体側だけ旧マッピングが
+# 残っていたため、人物と反対側へ旋回していた。
+#
+# 実機確認結果:
+#   bearing < 0  -> TRACK_LEFT
+#   bearing > 0  -> TRACK_RIGHT
+#
+# カメラ方向には触れず、外側ループの体コマンドだけを反転する。
+# 後からconfig.pyでも上書き可能。
+BODY_NEGATIVE_BEARING_COMMAND = str(
+    getattr(
+        cfg,
+        "BODY_NEGATIVE_BEARING_COMMAND",
+        "TRACK_LEFT",
+    )
+).strip().upper()
+
+BODY_POSITIVE_BEARING_COMMAND = str(
+    getattr(
+        cfg,
+        "BODY_POSITIVE_BEARING_COMMAND",
+        "TRACK_RIGHT",
+    )
+).strip().upper()
+
+_VALID_TURN_COMMANDS = {
+    "TRACK_LEFT",
+    "TRACK_RIGHT",
+}
+
+if (
+    BODY_NEGATIVE_BEARING_COMMAND
+    not in _VALID_TURN_COMMANDS
+):
+    raise ValueError(
+        "BODY_NEGATIVE_BEARING_COMMAND must be "
+        "TRACK_LEFT or TRACK_RIGHT"
+    )
+
+if (
+    BODY_POSITIVE_BEARING_COMMAND
+    not in _VALID_TURN_COMMANDS
+):
+    raise ValueError(
+        "BODY_POSITIVE_BEARING_COMMAND must be "
+        "TRACK_LEFT or TRACK_RIGHT"
+    )
+
+if (
+    BODY_NEGATIVE_BEARING_COMMAND
+    == BODY_POSITIVE_BEARING_COMMAND
+):
+    raise ValueError(
+        "Negative and positive bearing commands "
+        "must be different."
+    )
 
 # 前後移動はカメラと顔が正面へ戻った後だけ許可する。
 DISTANCE_HEAD_YAW_MAX_DEG = 4.0
@@ -298,7 +354,7 @@ SHOW_PREVIEW_WINDOW_REQUESTED = getattr(
     "SHOW_PREVIEW_WINDOW",
     False,
 )
-PREVIEW_WINDOW_NAME = "Presentation Escort V8.8.2"
+PREVIEW_WINDOW_NAME = "Presentation Escort V8.8.3"
 
 PRINT_ALL_ESP32_LINES = False
 
@@ -1941,7 +1997,7 @@ def draw_result(
 
 def main() -> None:
     print("==============================================")
-    print("Presentation Escort Auto Follow V8.8.2")
+    print("Presentation Escort Auto Follow V8.8.3")
     print("Dual-loop camera/body visual servo")
     print("==============================================")
 
@@ -2238,6 +2294,8 @@ def main() -> None:
                                 f"cameraYaw={camera_yaw:.1f} "
                                 f"residual={residual_deg:.1f} "
                                 f"bearing={body_bearing:.1f} "
+                                f"bearingSide="
+                                f"{'NEGATIVE' if body_bearing < 0 else 'POSITIVE'} "
                                 f"send={desired_body_command}"
                             )
                             if esp32.send_body(desired_body_command):
