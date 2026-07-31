@@ -1,5 +1,5 @@
 """
-Presentation Escort 自動追従 V8.5
+Presentation Escort 自動追従 V8.6
 
 機能:
 - 顔の左右位置に合わせてTRACK_LEFT / TRACK_RIGHT
@@ -15,7 +15,7 @@ Presentation Escort 自動追従 V8.5
 - 1パルス終了ごとに距離を再判定
 
 実行:
-    python3 follow_stable_white_red_v8_5.py
+    python3 follow_fast_corrected_v8_6.py
 """
 
 from __future__ import annotations
@@ -101,17 +101,23 @@ ENABLE_HISTOGRAM_EQUALIZATION = getattr(
 # 左右・上下
 # ============================================================
 
-# 判定が細かく反応しすぎないように範囲を拡大。
-BODY_TURN_START_X = 100
-BODY_STOP_X = 40
+# V8.6:
+# V8.5より反応を少し早めつつ、中央付近の誤反応は抑える。
+BODY_TURN_START_X = 82
+BODY_STOP_X = 45
 
-BODY_START_CONFIRM_FRAMES = 3
-BODY_STOP_CONFIRM_FRAMES = 3
-BODY_RESTART_COOLDOWN_SECONDS = 0.40
+BODY_START_CONFIRM_FRAMES = 2
+BODY_STOP_CONFIRM_FRAMES = 2
+BODY_RESTART_COOLDOWN_SECONDS = 0.22
 
-HEAD_START_Y = 42
-HEAD_STOP_Y = 18
-HEAD_COMMAND_INTERVAL_SECONDS = 0.22
+# 頭の上下追従を高速化。
+HEAD_START_Y = 30
+HEAD_STOP_Y = 14
+HEAD_COMMAND_INTERVAL_SECONDS = 0.08
+
+# 実機ではTRACK_LEFT / TRACK_RIGHTの物理方向が
+# 命令名と逆に見えるため、命令を最終段で明示的に入れ替える。
+SWAP_TRACK_COMMANDS = True
 
 
 # ============================================================
@@ -141,14 +147,11 @@ DISTANCE_NEAR_EXIT_RATIO = getattr(
     0.31,
 )
 
-# 顔枠の一時的な揺れを抑える。
-DISTANCE_SMOOTHING_FRAMES = 7
+# 7フレーム平均は安定する一方で反応が遅かったため、
+# V8.6では5フレームへ戻す。
+DISTANCE_SMOOTHING_FRAMES = 5
 
-DISTANCE_CONFIRM_FRAMES = getattr(
-    cfg,
-    "DISTANCE_CONFIRM_FRAMES",
-    3,
-)
+DISTANCE_CONFIRM_FRAMES = 2
 
 DISTANCE_MOVEMENT_ENABLED = getattr(
     cfg,
@@ -157,17 +160,11 @@ DISTANCE_MOVEMENT_ENABLED = getattr(
 )
 
 # 顔が左右中央から外れている場合、前後移動より旋回を優先。
-DISTANCE_MOVE_MAX_X = getattr(
-    cfg,
-    "DISTANCE_MOVE_MAX_X",
-    55,
-)
+# V8.5では55pxを少し超えただけで前後移動へSTOPが入り、
+# 前後追従が完了しにくかった。V8.6では90pxへ緩和する。
+DISTANCE_MOVE_MAX_X = 90
 
-DISTANCE_RESTART_COOLDOWN_SECONDS = getattr(
-    cfg,
-    "DISTANCE_RESTART_COOLDOWN_SECONDS",
-    0.55,
-)
+DISTANCE_RESTART_COOLDOWN_SECONDS = 0.30
 
 # テスト中の暴走防止。
 # GOODを一度確認するまでに行える連続パルス数。
@@ -189,19 +186,20 @@ FACE_LOST_GRACE_SECONDS = 0.70
 HEAD_CENTER_AFTER_FACE_LOST = True
 
 DETECTION_WIDTH = 320
-LOOP_INTERVAL_SECONDS = 0.04
+LOOP_INTERVAL_SECONDS = 0.02
 
 RESULT_IMAGE_PATH = Path(
-    "follow_stable_white_red_latest.jpg"
+    "follow_fast_corrected_latest.jpg"
 )
-SAVE_IMAGE_EVERY_N_LOOPS = 4
+# JPEG保存は処理時間を使うため頻度を下げる。
+SAVE_IMAGE_EVERY_N_LOOPS = 20
 
 SHOW_PREVIEW_WINDOW_REQUESTED = getattr(
     cfg,
     "SHOW_PREVIEW_WINDOW",
     False,
 )
-PREVIEW_WINDOW_NAME = "Presentation Escort V8.5"
+PREVIEW_WINDOW_NAME = "Presentation Escort V8.6"
 
 PRINT_ALL_ESP32_LINES = False
 
@@ -321,6 +319,12 @@ def open_camera() -> cv2.VideoCapture:
         1,
     )
 
+    # 対応しているカメラでは取得間隔を短縮する。
+    cap.set(
+        cv2.CAP_PROP_FPS,
+        30,
+    )
+
     return cap
 
 
@@ -427,6 +431,56 @@ def get_horizontal_control_error(
         return -raw_diff_x
 
     return raw_diff_x
+
+
+def get_track_command_for_error(
+    control_x: int,
+) -> Optional[str]:
+    """
+    顔の左右位置から、実際に送る旋回命令を決める。
+
+    control_x < 0:
+        顔が画面左側。
+
+    control_x > 0:
+        顔が画面右側。
+
+    実機ではTRACK_LEFT / TRACK_RIGHTの物理旋回方向が
+    命令名と逆だったため、SWAP_TRACK_COMMANDS=Trueで
+    最終的な送信命令だけを入れ替える。
+    """
+
+    if control_x <= -BODY_TURN_START_X:
+        logical_command = "TRACK_LEFT"
+
+    elif control_x >= BODY_TURN_START_X:
+        logical_command = "TRACK_RIGHT"
+
+    else:
+        return None
+
+    if not SWAP_TRACK_COMMANDS:
+        return logical_command
+
+    if logical_command == "TRACK_LEFT":
+        return "TRACK_RIGHT"
+
+    return "TRACK_LEFT"
+
+
+def get_face_side_label(
+    control_x: int,
+) -> str:
+    if control_x <= -BODY_TURN_START_X:
+        return "FACE_LEFT"
+
+    if control_x >= BODY_TURN_START_X:
+        return "FACE_RIGHT"
+
+    if abs(control_x) <= BODY_STOP_X:
+        return "CENTER"
+
+    return "HOLD"
 
 
 class DistanceEstimator:
@@ -937,7 +991,7 @@ def main() -> None:
         "=============================================="
     )
     print(
-        "Presentation Escort Auto Follow V8.5"
+        "Presentation Escort Auto Follow V8.6"
     )
     print(
         "White/Red LED + stable tracking"
@@ -949,6 +1003,7 @@ def main() -> None:
     print(
         "[HorizontalConfig] "
         f"INVERT={INVERT_HORIZONTAL_TRACKING} "
+        f"SWAP_COMMANDS={SWAP_TRACK_COMMANDS} "
         f"TURN_START={BODY_TURN_START_X} "
         f"STOP_X={BODY_STOP_X} "
         f"START_CONFIRM={BODY_START_CONFIRM_FRAMES} "
@@ -1147,10 +1202,17 @@ def main() -> None:
                 # 現在動作中の停止判定
                 # --------------------------------------------
 
-                if esp32.active_body == "TRACK_LEFT":
-                    horizontal_state = "TRACKING_LEFT"
+                if esp32.active_body in (
+                    "TRACK_LEFT",
+                    "TRACK_RIGHT",
+                ):
+                    horizontal_state = (
+                        f"TRACKING_{esp32.active_body}"
+                    )
 
-                    if control_x >= -BODY_STOP_X:
+                    # 命令名の左右に依存せず、
+                    # 顔が中央へ戻ったかだけで停止する。
+                    if abs(control_x) <= BODY_STOP_X:
                         body_stop_count += 1
                     else:
                         body_stop_count = 0
@@ -1161,26 +1223,7 @@ def main() -> None:
                     ):
                         esp32.send_stop(
                             (
-                                "LEFT_CENTER "
-                                f"ctrlX={control_x}"
-                            )
-                        )
-
-                elif esp32.active_body == "TRACK_RIGHT":
-                    horizontal_state = "TRACKING_RIGHT"
-
-                    if control_x <= BODY_STOP_X:
-                        body_stop_count += 1
-                    else:
-                        body_stop_count = 0
-
-                    if (
-                        body_stop_count
-                        >= BODY_STOP_CONFIRM_FRAMES
-                    ):
-                        esp32.send_stop(
-                            (
-                                "RIGHT_CENTER "
+                                "FACE_REACHED_CENTER "
                                 f"ctrlX={control_x}"
                             )
                         )
@@ -1224,25 +1267,17 @@ def main() -> None:
                 else:
                     body_stop_count = 0
 
-                    if abs(control_x) <= BODY_STOP_X:
-                        horizontal_state = "CENTER"
+                    horizontal_state = (
+                        get_face_side_label(
+                            control_x
+                        )
+                    )
 
-                    elif control_x <= -BODY_TURN_START_X:
-                        horizontal_state = "LEFT"
-
-                    elif control_x >= BODY_TURN_START_X:
-                        horizontal_state = "RIGHT"
-
-                    else:
-                        horizontal_state = "HOLD"
-
-                    turn_candidate: Optional[str] = None
-
-                    if control_x <= -BODY_TURN_START_X:
-                        turn_candidate = "TRACK_LEFT"
-
-                    elif control_x >= BODY_TURN_START_X:
-                        turn_candidate = "TRACK_RIGHT"
+                    turn_candidate = (
+                        get_track_command_for_error(
+                            control_x
+                        )
+                    )
 
                     if turn_candidate is not None:
                         distance_candidate = None
@@ -1266,6 +1301,14 @@ def main() -> None:
                                 BODY_RESTART_COOLDOWN_SECONDS
                             )
                         ):
+                            print(
+                                "[Horizontal] "
+                                f"faceSide={horizontal_state} "
+                                f"ctrlX={control_x} "
+                                f"send={turn_candidate} "
+                                f"swapped={SWAP_TRACK_COMMANDS}"
+                            )
+
                             if esp32.send_body(
                                 turn_candidate
                             ):
