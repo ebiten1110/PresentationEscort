@@ -1,0 +1,22 @@
+# V8.5は次の重要値をスクリプト内で固定しています。
+# 既存config.pyに古い値が残っていても、V8.5の値が優先されます。
+
+# 左右方向
+# INVERT_HORIZONTAL_TRACKING = False
+
+# 旋回判定
+# BODY_TURN_START_X = 100
+# BODY_STOP_X = 40
+# BODY_START_CONFIRM_FRAMES = 3
+# BODY_STOP_CONFIRM_FRAMES = 3
+
+# 一時顔ロスト
+# FACE_LOST_GRACE_SECONDS = 0.70
+
+# 距離平滑化
+# DISTANCE_SMOOTHING_FRAMES = 7
+
+# 既存設定として必要に応じて使用
+SHOW_PREVIEW_WINDOW = False
+DISTANCE_MOVEMENT_ENABLED = True
+INVERT_DISTANCE_MOVEMENT = False
