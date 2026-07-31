@@ -1,5 +1,5 @@
 """
-Presentation Escort 自動追従 V8.8
+Presentation Escort 自動追従 V8.8.2
 
 機能:
 - 顔の左右位置に合わせてTRACK_LEFT / TRACK_RIGHT
@@ -17,7 +17,7 @@ Presentation Escort 自動追従 V8.8
 - 1パルス終了ごとに距離を再判定
 
 実行:
-    python3 follow_dual_loop_v8_8.py
+    python3 follow_dual_loop_v8_8_2.py
 """
 
 from __future__ import annotations
@@ -121,11 +121,33 @@ HEAD_POSE_COMMAND_INTERVAL_SECONDS = 0.055
 HEAD_STATUS_INTERVAL_SECONDS = 0.15
 HEAD_COMMAND_EPSILON_DEG = 0.25
 
-# 画像の左へ顔がずれたとき、既存機構では負方向へ首を振る。
-# 実機で首だけ逆ならconfig.pyへ -1.0 を指定する。
-HEAD_YAW_IMAGE_DIRECTION = float(
-    getattr(cfg, "HEAD_YAW_IMAGE_DIRECTION", 1.0)
+# ============================================================
+# 水平方向の符号
+# ============================================================
+#
+# USBカメラはロボット側から人物を見ているため、
+# 人物が自分から見て右へ移動すると、ロボット座標では左方向になる。
+#
+# V8.8では画像X誤差をそのままyawへ加算していたため、
+# 人物が右へ移動したときにカメラも物理的な右へ向いていた。
+#
+# V8.8.2では画像Xからロボットyawへの符号を1か所へ統一し、
+# カメラ内側ループと体外側ループの残差計算の両方に適用する。
+#
+# 実機設定:
+#   画面右の顔  -> 負yaw
+#   画面左の顔  -> 正yaw
+#
+# 既存config.pyのHEAD_YAW_IMAGE_DIRECTIONは使用しない。
+# 方向を変更する場合は、新しい設定名だけを変更する。
+CAMERA_X_TO_ROBOT_YAW_DIRECTION = float(
+    getattr(
+        cfg,
+        "CAMERA_X_TO_ROBOT_YAW_DIRECTION",
+        -1.0,
+    )
 )
+
 HEAD_PITCH_IMAGE_DIRECTION = float(
     getattr(cfg, "HEAD_PITCH_IMAGE_DIRECTION", 1.0)
 )
@@ -276,7 +298,7 @@ SHOW_PREVIEW_WINDOW_REQUESTED = getattr(
     "SHOW_PREVIEW_WINDOW",
     False,
 )
-PREVIEW_WINDOW_NAME = "Presentation Escort V8.8"
+PREVIEW_WINDOW_NAME = "Presentation Escort V8.8.2"
 
 PRINT_ALL_ESP32_LINES = False
 
@@ -1632,7 +1654,7 @@ class HeadPoseController:
             HEAD_X_DEADZONE_PX,
             HEAD_YAW_GAIN_DEG_PER_PX,
             HEAD_MAX_YAW_STEP_DEG,
-        ) * HEAD_YAW_IMAGE_DIRECTION
+        ) * CAMERA_X_TO_ROBOT_YAW_DIRECTION
 
         pitch_step = self._step_from_error(
             face.diff_y,
@@ -1693,7 +1715,9 @@ class HeadPoseController:
             print(
                 "[HeadInnerLoop] "
                 f"targetYaw={self.yaw_target:.1f} "
-                f"targetPitch={self.pitch_target:.1f}"
+                f"targetPitch={self.pitch_target:.1f} "
+                f"xToYawSign="
+                f"{CAMERA_X_TO_ROBOT_YAW_DIRECTION:+.1f}"
             )
             self.last_log_time = now
         return True
@@ -1917,7 +1941,7 @@ def draw_result(
 
 def main() -> None:
     print("==============================================")
-    print("Presentation Escort Auto Follow V8.8")
+    print("Presentation Escort Auto Follow V8.8.2")
     print("Dual-loop camera/body visual servo")
     print("==============================================")
 
@@ -1926,7 +1950,8 @@ def main() -> None:
         f"X_DEADZONE={HEAD_X_DEADZONE_PX}px "
         f"Y_DEADZONE={HEAD_Y_DEADZONE_PX}px "
         f"YAW_RANGE={HEAD_YAW_MIN_DEG:.0f}..{HEAD_YAW_MAX_DEG:.0f} "
-        f"PITCH_RANGE={HEAD_PITCH_MIN_DEG:.0f}..{HEAD_PITCH_MAX_DEG:.0f}"
+        f"PITCH_RANGE={HEAD_PITCH_MIN_DEG:.0f}..{HEAD_PITCH_MAX_DEG:.0f} "
+        f"X_TO_YAW_SIGN={CAMERA_X_TO_ROBOT_YAW_DIRECTION:+.1f}"
     )
     print(
         "[BodyOuterLoopConfig] "
@@ -2065,9 +2090,15 @@ def main() -> None:
                     else head_controller.pitch_target
                 )
 
-                residual_deg = residual_x_to_degrees(
-                    face.diff_x,
-                    frame.shape[1],
+                # カメラyawと画像残差を同じロボット座標系へそろえる。
+                # ここへ同じ符号を適用しないと、カメラ角と残差が
+                # 打ち消し合い、体が誤方向へ旋回する。
+                residual_deg = (
+                    residual_x_to_degrees(
+                        face.diff_x,
+                        frame.shape[1],
+                    )
+                    * CAMERA_X_TO_ROBOT_YAW_DIRECTION
                 )
                 body_bearing = camera_yaw + residual_deg
 
