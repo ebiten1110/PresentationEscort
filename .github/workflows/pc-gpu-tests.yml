@@ -1,0 +1,30 @@
+name: PC GPU protocol and target adapter tests
+
+on:
+  push:
+    branches:
+      - feature/pc-gpu-follow-2026-10-28
+    paths:
+      - "experiments/pc_gpu/**"
+      - ".github/workflows/pc-gpu-tests.yml"
+  pull_request:
+    paths:
+      - "experiments/pc_gpu/**"
+      - ".github/workflows/pc-gpu-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stdlib-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run protocol and adapter unit tests
+        run: python -m unittest discover -s experiments/pc_gpu/tests -v
