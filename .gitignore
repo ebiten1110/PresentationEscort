@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Runtime outputs
+*.log
+camera_test.jpg
+follow_test.jpg
+advanced_follow_test.jpg
+advanced_follow_loop_latest.jpg
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# PlatformIO build outputs
+.pio/
