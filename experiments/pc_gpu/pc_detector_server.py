@@ -11,6 +11,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from detection_protocol import DetectionResult, recv_message, send_json
+from person_tracker import PersonBox, PersonTracker
 
 
 @dataclass
@@ -29,12 +30,17 @@ class PersonDetector:
         print(f"[Model] loading {config.model} device={config.device}")
         self.model = YOLO(config.model)
         self.last_finish_time: Optional[float] = None
+        self.tracker = PersonTracker(min_confidence=config.confidence)
         print("[Model] ready")
+
+    def reset_tracking(self) -> None:
+        """Clear person-lock state on every new Pi connection."""
+        self.tracker.reset()
+        self.last_finish_time = None
 
     def detect(self, frame: np.ndarray) -> DetectionResult:
         frame_height, frame_width = frame.shape[:2]
         started = time.perf_counter()
-
         results = self.model.predict(
             source=frame,
             conf=self.config.confidence,
@@ -53,55 +59,47 @@ class PersonDetector:
                 server_fps = 1.0 / elapsed
         self.last_finish_time = now
 
-        if not results:
-            return DetectionResult(
-                found=False,
-                frame_width=frame_width,
-                frame_height=frame_height,
-                inference_ms=inference_ms,
-                server_fps=server_fps,
-            )
+        candidates: list[PersonBox] = []
+        if results:
+            detected_boxes = results[0].boxes
+            if detected_boxes is not None:
+                for idx in range(len(detected_boxes)):
+                    if int(detected_boxes.cls[idx].item()) != 0:
+                        continue
+                    x1, y1, x2, y2 = detected_boxes.xyxy[idx].tolist()
+                    x1 = max(0, min(int(round(x1)), frame_width - 1))
+                    y1 = max(0, min(int(round(y1)), frame_height - 1))
+                    x2 = max(x1 + 1, min(int(round(x2)), frame_width))
+                    y2 = max(y1 + 1, min(int(round(y2)), frame_height))
+                    candidates.append(
+                        PersonBox(
+                            x1=x1, y1=y1, x2=x2, y2=y2,
+                            confidence=float(detected_boxes.conf[idx].item()),
+                        )
+                    )
 
-        boxes = results[0].boxes
-        if boxes is None or len(boxes) == 0:
-            return DetectionResult(
-                found=False,
-                frame_width=frame_width,
-                frame_height=frame_height,
-                inference_ms=inference_ms,
-                server_fps=server_fps,
-            )
-
-        best_index = max(
-            range(len(boxes)),
-            key=lambda index: float(boxes.conf[index].item()),
-        )
-        x1, y1, x2, y2 = boxes.xyxy[best_index].tolist()
-        confidence = float(boxes.conf[best_index].item())
-
-        x1 = max(0, min(int(round(x1)), frame_width - 1))
-        y1 = max(0, min(int(round(y1)), frame_height - 1))
-        x2 = max(x1 + 1, min(int(round(x2)), frame_width))
-        y2 = max(y1 + 1, min(int(round(y2)), frame_height))
-
-        width = x2 - x1
-        height = y2 - y1
-
-        return DetectionResult(
-            found=True,
-            center_x=x1 + width // 2,
-            center_y=y1 + height // 2,
-            width=width,
-            height=height,
-            confidence=confidence,
-            class_id=0,
-            class_name="person",
+        selected = self.tracker.select(candidates, frame_width, frame_height)
+        common = dict(
             frame_width=frame_width,
             frame_height=frame_height,
             inference_ms=inference_ms,
             server_fps=server_fps,
+            source="pc_gpu_person_continuity",
         )
+        if selected is None:
+            return DetectionResult(found=False, **common)
 
+        return DetectionResult(
+            found=True,
+            center_x=int(round(selected.cx)),
+            center_y=int(round(selected.cy)),
+            width=selected.width,
+            height=selected.height,
+            confidence=selected.confidence,
+            class_id=0,
+            class_name="person",
+            **common,
+        )
 
 def decode_jpeg(payload: bytes) -> np.ndarray:
     array = np.frombuffer(payload, dtype=np.uint8)
@@ -118,6 +116,7 @@ def handle_client(
 ) -> None:
     print(f"[Client] connected {address[0]}:{address[1]}")
     conn.settimeout(5.0)
+    detector.reset_tracking()
 
     try:
         while True:
