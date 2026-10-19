@@ -103,3 +103,15 @@ Pi: `found=... center=(x,y) size=(w x h) infer=...ms rtt=...ms` が連続表示�
 ```bash
 python -m unittest discover -s experiments/pc_gpu/tests -v
 ```
+
+## 7. 次工程：追従座標Dry-run（ESP32非接続）
+
+PCサーバーを起動した後、Pi側で人物BBoxからV8.8.3向けの水平誤差・頭部付近の照準点を計算します。
+
+```bash
+python3 experiments/pc_gpu/pi_tracking_dry_run.py --host <PCのIPv4アドレス>
+```
+
+ログの `aim=(x,y)` は人物枠の上端から約22%の位置（頭部周辺の概算）、`error=(dx,dy)` は画面中心との差、`residual=...deg` は既存V8.8.3の外側ループに使う残留角度の**一部**です。実際の本体旋回角度には、頭部Yawの実測値を加える必要があります。
+
+**重要:** 全身BBoxの高さを既存の「顔BBox用の距離しきい値」に流用しないでください。距離追従は別途キャリブレーションしてから有効化します。また、画面が複数人の場合の対象固定（Target Lock）も未実装です。
