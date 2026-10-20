@@ -111,6 +111,18 @@ class SerialCommandTests(unittest.TestCase):
         self.assertEqual(sink.read_available(), b"456")
         self.assertEqual(sink.read_available(), b"")
 
+    def test_safety_handshake_commands_allowed(self):
+        sink, uart = self.make()
+        for command in (
+            "SAFETY_ARM", "SAFETY_PING", "SAFETY_STATUS",
+            "SAFETY_DISARM", "SAFETY_ESTOP", "SAFETY_RESET",
+        ):
+            sink.send(command)
+        self.assertEqual(uart.writes, [
+            b"SAFETY_ARM\n", b"SAFETY_PING\n", b"SAFETY_STATUS\n",
+            b"SAFETY_DISARM\n", b"SAFETY_ESTOP\n", b"SAFETY_RESET\n",
+        ])
+
     def test_requires_port(self):
         with self.assertRaises(ValueError):
             SerialCommandSink("", serial_factory=FakeUart)

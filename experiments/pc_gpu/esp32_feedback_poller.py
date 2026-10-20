@@ -35,6 +35,7 @@ class Esp32FeedbackPoller:
             raise ValueError("invalid timestamp")
         received = self.sink.read_available(max_bytes=4096)
         if received:
+            self.controller.gateway.observe_firmware_feedback(received, now=current)
             self.controller.feed_esp32(received, now=current)
         if (
             self.last_request_at is None

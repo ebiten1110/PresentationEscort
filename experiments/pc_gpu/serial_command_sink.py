@@ -14,6 +14,8 @@ _ALLOWED = frozenset({
     "STOP", "TRACK_LEFT", "TRACK_RIGHT",
     "TRACK_FORWARD", "TRACK_BACKWARD",
     "HEAD_STATUS", "STATUS",
+    "SAFETY_ARM", "SAFETY_PING", "SAFETY_STATUS",
+    "SAFETY_DISARM", "SAFETY_ESTOP", "SAFETY_RESET",
 })
 
 
@@ -21,6 +23,7 @@ class SerialCommandSink:
     """Bounded pyserial.write transport with a strict motor allowlist."""
 
     requires_watchdog = True
+    requires_firmware_safety = True
 
     def __init__(
         self,

@@ -76,3 +76,10 @@ python3 experiments/pc_gpu/pi_safe_stop_probe.py --enable-serial --port /dev/tty
 注意：以前のESP32ファームウェアは引き続き未変更です。ここでのSTATUS/HEAD_STATEは**実機の新しいファームウェアを書き込まず既存の出力を利用**します。ただし、現在実機に入っているファームウェアがGitHub版と一致する保証はありません。
 
 `enable_actuation=True`は実機安全停止とシリアル読み戻しの検証前に有効化しないこと。ESP32独立watchdog・Piクラッシュ時の停止はまだ実装・検証していません。実機では安全に利用できるよう、別のハードウェア停止装置も必要です。
+
+## Phase 6 — ESP32独立通信ウォッチドッグ
+
+- ESP32の新ファームウェアは起動時DISARMED、750ms通信途絶でLATCHED。
+- PiはARM_ACCEPTEDとState: ARMEDの確認後にのみAUTO/MANUALへ移行し、監視スレッドが定期PING。
+- 片側だけ更新すると旧版は走行できない。実機のフラッシュは未実施。
+- 詳細: ../../docs/PHASE6_ESP32_WATCHDOG.md

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Optional, Protocol
 
 from safety_manager import ControlDecision, Mode, SafetyManager, SafetyStatus
+from esp32_safety_link import Esp32SafetyLink
 
 
 class CommandSink(Protocol):
@@ -55,6 +56,7 @@ class PiMotionGateway:
             raise ValueError("poll_interval_s must be 0.01 .. 0.25")
         self.sink = sink
         self._requires_watchdog = bool(getattr(sink, "requires_watchdog", False))
+        self._firmware_safety = Esp32SafetyLink(sink) if getattr(sink, "requires_firmware_safety", False) else None
         self.safety = safety if safety is not None else SafetyManager()
         self.poll_interval_s = poll_interval_s
         self._lock = threading.RLock()
@@ -74,13 +76,45 @@ class PiMotionGateway:
         try:
             self.sink.send("STOP")
             self._last_command = "STOP"
+            if self._firmware_safety is not None:
+                self._firmware_safety.note_stop(latched=(self.safety.mode == Mode.ESTOP))
         except Exception:
             self._transport_fault = True
             self._last_command = "STOP_DELIVERY_FAILED"
             self.safety.emergency_stop()
 
     def _tick_locked(self, now: Optional[float] = None) -> None:
-        self.safety.tick(now=now)
+        current = self.safety._now(now)
+        fw = self._firmware_safety
+        # Check ESP32 ACK freshness before the AI watchdog disarms AUTO,
+        # otherwise a stale firmware status can be hidden as a target timeout.
+        if (
+            fw is not None
+            and self.safety.mode in (Mode.AUTO, Mode.MANUAL)
+            and not fw.fresh_armed(current)
+        ):
+            self.safety.emergency_stop()
+            self._stop_locked("FIRMWARE_SAFETY_TIMEOUT", force=True)
+        self.safety.tick(now=current)
+        if fw is not None:
+            if fw.pending_expired(current):
+                fw.note_stop()
+                try:
+                    self.sink.send("SAFETY_DISARM")
+                except Exception:
+                    self._transport_fault = True
+                    self.safety.emergency_stop()
+            if self.safety.mode in (Mode.AUTO, Mode.MANUAL):
+                if not fw.fresh_armed(current):
+                    self.safety.emergency_stop()
+                    self._stop_locked("FIRMWARE_SAFETY_TIMEOUT", force=True)
+                else:
+                    try:
+                        fw.send_ping_if_due(now=current)
+                    except Exception:
+                        self._transport_fault = True
+                        self.safety.emergency_stop()
+                        self._stop_locked("SAFETY_PING_FAILED", force=True)
         if self.safety.mode not in (Mode.AUTO, Mode.MANUAL):
             self._stop_locked(self.safety.reason)
 
@@ -143,6 +177,29 @@ class PiMotionGateway:
             if self.safety.mode not in (Mode.AUTO, Mode.MANUAL):
                 self._stop_locked("LINK_LOST")
 
+    def observe_firmware_feedback(self, raw: bytes, *, now: Optional[float] = None) -> None:
+        """Consume ESP32 safety ACK/STATUS from the sole serial reader."""
+        with self._lock:
+            fw = self._firmware_safety
+            if fw is None:
+                return
+            current = self.safety._now(now)
+            requested = fw.feed(raw, now=current)
+            if fw.state == "LATCHED":
+                self.safety.emergency_stop()
+                self._stop_locked("ESP32_LATCHED", force=True)
+                return
+            if requested == "AUTO":
+                if not self.safety.arm_auto(now=current):
+                    self._stop_locked("AUTO_ARM_REJECTED", force=True)
+            elif requested == "MANUAL":
+                if not self.safety.arm_manual(now=current):
+                    self._stop_locked("MANUAL_ARM_REJECTED", force=True)
+
+    def firmware_safety_status(self) -> str:
+        with self._lock:
+            return self._firmware_safety.state if self._firmware_safety is not None else "NOT_REQUIRED"
+
     def arm_auto(self, now: Optional[float] = None) -> bool:
         with self._lock:
             if self._requires_watchdog and not (self._thread and self._thread.is_alive()):
@@ -151,7 +208,21 @@ class PiMotionGateway:
                 return False
             self._tick_locked(now)
             if self.safety.mode == Mode.MANUAL:
-                self._stop_locked("MODE_SWITCH", force=self._motion_pending)
+                self.safety.disarm("MODE_SWITCH")
+                self._stop_locked("MODE_SWITCH", force=True)
+            if self._firmware_safety is not None:
+                current = self.safety._now(now)
+                if not self.safety.status(now=current).auto_ready:
+                    return False
+                try:
+                    # First explicit call begins the ESP32 handshake.
+                    # AUTO becomes active only upon a subsequent ARM_ACCEPTED.
+                    self._firmware_safety.request_arm("AUTO", now=current)
+                except Exception:
+                    self._transport_fault = True
+                    self.safety.emergency_stop()
+                    return False
+                return False
             return self.safety.arm_auto(now=now)
 
     def arm_manual(self, now: Optional[float] = None) -> bool:
@@ -163,7 +234,15 @@ class PiMotionGateway:
                 return False
             self._tick_locked(now)
             if self.safety.mode == Mode.AUTO:
-                self._stop_locked("MODE_SWITCH", force=self._motion_pending)
+                self.safety.disarm("MODE_SWITCH")
+                self._stop_locked("MODE_SWITCH", force=True)
+            if self._firmware_safety is not None:
+                try:
+                    self._firmware_safety.request_arm("MANUAL", now=self.safety._now(now))
+                except Exception:
+                    self._transport_fault = True
+                    self.safety.emergency_stop()
+                return False
             return self.safety.arm_manual(now=now)
 
     def request_motion(
@@ -242,6 +321,11 @@ class PiMotionGateway:
     def emergency_stop(self) -> None:
         with self._lock:
             self.safety.emergency_stop()
+            if self._firmware_safety is not None:
+                try:
+                    self.sink.send("SAFETY_ESTOP")
+                except Exception:
+                    self._transport_fault = True
             self._stop_locked("EMERGENCY_STOP", force=True)
 
     def reset_emergency_stop(self) -> None:
