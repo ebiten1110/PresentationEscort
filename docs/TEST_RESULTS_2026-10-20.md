@@ -164,3 +164,19 @@ Raspberry Pi 3 A+の現在環境、ESP32の実際の書込版、サーボの配�
 - Pi上のUSBシリアル所有を排他モードとして要求（ソフトウェアテスト成功、実機未確認）
 
 制限：バージョン診断もESP32実機では実行していない。物理的な電源・サーボの安全性は不明。実モーターを動かす統合ランチャーはまだ公開していない。今後は単一UART所有・検出/頭部/体/STOP状態と操作UIの統合が必要。
+
+## Phase 9 — PC/GPU人物追従 + Pi安全ゲート + Virtual ESP32 + 操作画面
+
+- 対象commit: `06809f5f53f25ba745a424ac55487336bc66fb32`
+- GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39358876863
+- Python構文確認、**221件のソフトウェア単体・統合テスト全件成功（失敗0）**
+- 追加: `virtual_esp32.py`、`pi_integrated_simulation.py`、`tests/test_phase9_integrated_simulation.py`、ランチャー `--stage integrated`。
+- `--stage integrated` はモーター指令を `VirtualEsp32` にのみ送り、実ESP32のUSB/シリアルには絶対接続しない。
+- 単一プロセスで既存 `CameraInferenceWorker` / PiMotionGateway / Esp32FeedbackPoller / RemotePersonController / Web UI を統合。
+- 検証: 模擬ARM_ACCEPTEDとState: ARMED、750msファームウェアwatchdog、MANUALデッドマン、左右旋回、HEAD_POSE_SET、STOP、ESTOPと手動RESET→SAFE。
+- 追加修正: PiMotionGatewayが頭部のみ制御していた場合でも対象ロスト・解除時にSTOPを送信。
+- 追加修正: UARTに古いDISARMEDが残り新しいARM要求より前に読まれても、ARM_ACCEPTEDの到着を待つ（ACKなしならタイムアウト拒否）。
+- 初回Phase9試験ではARMが古いDISARMEDで取り消される問題を含む失敗があった。修正後、ACK順序を含む221件すべて合格。
+- 本検証は**模擬ESP32を利用したソフトウェア試験**。実機ESP32やPi3A+上のパフォーマンス、サーボ、物理停止、電源、転倒防止は未検証。
+
+実機使用時はFirmware V1、STOP/ACK、通信断、配線、サーボ、支持台での停止を先に確かめ、直結出力はデフォルトOFFのまま段階開放する。
