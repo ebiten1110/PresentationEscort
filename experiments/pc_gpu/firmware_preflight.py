@@ -50,6 +50,10 @@ class FirmwarePreflight:
             return PreflightStatus(False, False, False, "FIRMWARE_PROTOCOL_MISMATCH")
         if not self._version_seen:
             return PreflightStatus(False, False, False, "FIRMWARE_VERSION_UNCONFIRMED")
+        if self._state == "UNKNOWN":
+            # UART replies may arrive in separate packets. Do not give up
+            # before the full safety status has been received.
+            return PreflightStatus(True, False, False, "FIRMWARE_STATE_UNCONFIRMED")
         if self._state != "DISARMED":
             return PreflightStatus(True, False, False, "FIRMWARE_NOT_DISARMED")
         return PreflightStatus(True, True, True, "PROTOCOL_V1_DISARMED")
