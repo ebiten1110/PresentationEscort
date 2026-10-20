@@ -131,6 +131,31 @@ class GatewayFirmwareHandshakeTests(unittest.TestCase):
         self.g.observe_firmware_feedback(b"[Safety] State: LATCHED\n", now=now+0.1)
         self.assertEqual(self.g.status(now=now+0.11).safety.mode, Mode.ESTOP)
 
+    def test_explicit_firmware_reset_requires_ack_and_rearm(self):
+        now = time.monotonic()
+        for _ in range(3):
+            self.g.observe_detection(True, 40.0, now=now)
+        self.g.arm_auto(now=now)
+        self.g.observe_firmware_feedback(
+            b"[Safety] ARM_ACCEPTED\\n[Safety] State: ARMED\\n".replace(b"\\n", b"\n"),
+            now=now+0.01,
+        )
+        self.g.emergency_stop()
+        self.assertEqual(self.g.status(now=now+0.02).safety.mode, Mode.ESTOP)
+        self.assertTrue(self.g.request_firmware_reset())
+        self.assertIn("SAFETY_RESET", self.sink.commands)
+        self.g.reset_emergency_stop()
+        self.assertEqual(self.g.status(now=now+0.02).safety.mode, Mode.ESTOP)
+        # ESP32 confirms reset to DISARMED, but never immediately rearms.
+        self.g.observe_firmware_feedback(b"[Safety] State: DISARMED\n", now=now+0.03)
+        self.g.reset_emergency_stop()
+        self.assertEqual(self.g.status(now=now+0.04).safety.mode, Mode.SAFE)
+        self.assertFalse(self.g.request_motion("TRACK_LEFT", source="AUTO", now=now+0.04).approved)
+
+    def test_firmware_reset_not_sent_when_not_estopped(self):
+        self.assertFalse(self.g.request_firmware_reset())
+        self.assertNotIn("SAFETY_RESET", self.sink.commands)
+
     def test_old_firmware_never_acknowledges(self):
         now = time.monotonic()
         for _ in range(3):

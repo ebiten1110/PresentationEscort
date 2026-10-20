@@ -328,10 +328,38 @@ class PiMotionGateway:
                     self._transport_fault = True
             self._stop_locked("EMERGENCY_STOP", force=True)
 
+    def request_firmware_reset(self) -> bool:
+        """Operator-only request after inspecting the physical device.
+
+        Never runs automatically after a timeout or reconnection. Sending
+        RESET does NOT itself rearm Pi nor firmware motion control.
+        """
+        with self._lock:
+            if (
+                self._firmware_safety is None
+                or self.safety.mode != Mode.ESTOP
+                or self._transport_fault
+            ):
+                return False
+            try:
+                self.sink.send("SAFETY_RESET")
+                return True
+            except Exception:
+                self._transport_fault = True
+                return False
+
     def reset_emergency_stop(self) -> None:
         with self._lock:
-            if not self._transport_fault:
-                self.safety.reset_emergency_stop()
+            if self._transport_fault:
+                return
+            if self._firmware_safety is not None:
+                fw = self._firmware_safety
+                if fw.state != "DISARMED" or fw.state_at is None:
+                    return
+                current = self.safety._now(None)
+                if not 0 <= current - fw.state_at <= fw.ack_ttl_s:
+                    return
+            self.safety.reset_emergency_stop()
 
     def close(self) -> None:
         with self._lock:
