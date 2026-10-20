@@ -348,7 +348,8 @@ class PiMotionGateway:
                 self._transport_fault = True
                 return False
 
-    def reset_emergency_stop(self) -> None:
+    def reset_emergency_stop(self, now: Optional[float] = None) -> None:
+        """Operator acknowledgement; cannot reset before fresh ESP32 DISARMED."""
         with self._lock:
             if self._transport_fault:
                 return
@@ -356,7 +357,7 @@ class PiMotionGateway:
                 fw = self._firmware_safety
                 if fw.state != "DISARMED" or fw.state_at is None:
                     return
-                current = self.safety._now(None)
+                current = self.safety._now(now)
                 if not 0 <= current - fw.state_at <= fw.ack_ttl_s:
                     return
             self.safety.reset_emergency_stop()

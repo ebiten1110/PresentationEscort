@@ -144,11 +144,11 @@ class GatewayFirmwareHandshakeTests(unittest.TestCase):
         self.assertEqual(self.g.status(now=now+0.02).safety.mode, Mode.ESTOP)
         self.assertTrue(self.g.request_firmware_reset())
         self.assertIn("SAFETY_RESET", self.sink.commands)
-        self.g.reset_emergency_stop()
+        self.g.reset_emergency_stop(now=now+0.02)
         self.assertEqual(self.g.status(now=now+0.02).safety.mode, Mode.ESTOP)
         # ESP32 confirms reset to DISARMED, but never immediately rearms.
         self.g.observe_firmware_feedback(b"[Safety] State: DISARMED\n", now=now+0.03)
-        self.g.reset_emergency_stop()
+        self.g.reset_emergency_stop(now=now+0.04)
         self.assertEqual(self.g.status(now=now+0.04).safety.mode, Mode.SAFE)
         self.assertFalse(self.g.request_motion("TRACK_LEFT", source="AUTO", now=now+0.04).approved)
 
