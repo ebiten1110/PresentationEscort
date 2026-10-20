@@ -121,3 +121,17 @@ Raspberry Pi 3 A+の現在環境、ESP32の実際の書込版、サーボの配�
 - 展示用フル走行テスト
 
 **注意：Phase 5の合格はソフトウェアのみ。実機サーボへは送信していない。**
+
+## Phase 6 — ESP32独立通信ウォッチドッグ（2026-10-20）
+
+- 対象GitHub commit: 8e45f0a93a3917a40b149a8f1cc5d86f79a1a65c
+- Python構文チェック＋ソフトウェア単体テスト: **150 / 150合格**
+- Python GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39353199423
+- ESP32ファームウェアのPlatformIO **ビルド成功（書き込みなし）**
+- C++純粋ウォッチドッグ状態機械のネイティブテスト **成功**
+- ESP32 GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39352815051
+- 確認内容：初期DISARMED、明示ARM、150ms PING、750msタイムアウトでLATCHED、遅延PING拒否、STOP/ESTOP/RESET後の再ARM必須、Arduino millisオーバーフロー、Pi側ACK待ちと異常時コマンド遮断。
+- 追加異常解除テスト2件で、ラッチ状態からの明示リセット要求、ESP32のDISARMED応答後だけPiのESTOP解除、および勝手に追従を再開しないことを検証。
+- テスト中の修正：仮想時刻と実時刻の比較が混在していたテストを統一し、150件全合格。
+- ESP32物理モーションの向き・サーボの取り付け角・配線・電源・停止タイミングは**実機未検証**。
+- 重要：新ESP32ファームウェアでは旧V8.8.3のPi側プログラムが動作をARMできない。バージョン同時移行が必須。新ESP32コードはGitHubの開発ブランチだけに反映し、実機への書込は実施していない。
