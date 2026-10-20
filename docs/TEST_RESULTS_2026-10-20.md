@@ -180,3 +180,17 @@ Raspberry Pi 3 A+の現在環境、ESP32の実際の書込版、サーボの配�
 - 本検証は**模擬ESP32を利用したソフトウェア試験**。実機ESP32やPi3A+上のパフォーマンス、サーボ、物理停止、電源、転倒防止は未検証。
 
 実機使用時はFirmware V1、STOP/ACK、通信断、配線、サーボ、支持台での停止を先に確かめ、直結出力はデフォルトOFFのまま段階開放する。
+
+## Phase 10 — ソフトウェア基準固定／オフラインバックアップと実機GO/NO-GO（2026-10-20）
+
+- 対象コミット: `f17a63734c9470d00b95b48e36cc1c74b66f38ed`
+- GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39360021994
+- GitHub CIにて重要15ファイルのGit blob SHA照合＋Git履歴の祖先確認に成功
+- Python構文確認およびユニット・結合テストは **242件全合格・失敗0**
+- Phase10新規21件はGit archive/bundle保存・検証、未コミット/ハッシュ不一致/別履歴拒否、バックアップ改竄のSHA256検出、GO/NO-GO判定テンプレの受理・拒否を検証
+- `docs/PHASE10_CODE_BASELINE.json` はPhase9ソフトウェア基準（コミット`e0435b3f953f57cdd768173e8f171eb8db215376`）の変更検知基準。
+- ソースバックアップは実Gitクローンの追跡対象と履歴だけを保存。**ユーザーのPiに保存した実績ではない**。ESP32の現物ファームウェアも保存しない。
+- 実機GO/NO-GOテンプレの初期値は全項目`NOT_RUN`。物理STOP・配線・電源・発表者ロック・観客のいる環境でのAUTO動作は未検証。
+- 実機運動の解禁・PiやESP32への書込・本番バイナリの指定・GitHub mainへの統合は行っていない。
+
+Phase10運用手順: `docs/PHASE10_RELEASE_READINESS.md`
