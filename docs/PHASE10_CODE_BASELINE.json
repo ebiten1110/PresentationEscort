@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "project": "PresentationEscort",
+  "purpose": "Phase 9 tested software baseline for Phase 10 preparation; not a hardware release approval",
+  "baseline_commit": "e0435b3f953f57cdd768173e8f171eb8db215376",
+  "baseline_branch": "feature/pc-gpu-follow-2026-10-28",
+  "firmware_protocol": "V1",
+  "firmware_timeout_ms": 750,
+  "operator_status": "DRY_RUN_ONLY",
+  "hardware_validated": false,
+  "files": {
+    "raspberry_pi/follow_dual_loop_v8_8.py": "f10997b28a51ef21631d880d577c771e1dbbf04c",
+    "raspberry_pi/config.py": "5a35a91316699bca8d395527dcb3308e75381e8d",
+    "esp32/src/safety_watchdog.h": "1ad5f5fd7c2ab844d21451cf518ec3a044cb1379",
+    "esp32/src/safety_runtime.cpp": "24d1dec999b3076df02285a93775e44923ca36c6",
+    "esp32/src/serial_receive.cpp": "611e297939705746136ca200363eb27dc87192b8",
+    "esp32/src/main.cpp": "9613e717b41fcd06027626c8b1e5f0c856a98ac8",
+    "esp32/platformio.ini": "975f9dd7ab07da97939787fcc990a2fac9101e30",
+    "experiments/pc_gpu/pi_integrated_simulation.py": "8aec058f8788a67bf2451a9945322b25afd0e40b",
+    "experiments/pc_gpu/pi_deployment_launcher.py": "fbd8082d34f188a1a23c311dfc8b7f1f92275a2d",
+    "experiments/pc_gpu/virtual_esp32.py": "2df1ac6b16c2e5be7a577121c144ed347a0b0326",
+    "experiments/pc_gpu/motion_gateway.py": "8e6f916aa9f6e691eede1e5b145b34bbc97d7744",
+    "experiments/pc_gpu/serial_command_sink.py": "12cdfbd442262615f1164f795c1bebdbdf4cd253",
+    "experiments/pc_gpu/esp32_safety_link.py": "d72dca753ab8a9d9d2a4c2a8b08bd7a1c9cdbd54",
+    "experiments/pc_gpu/remote_person_controller.py": "0adee88ff1f94b1675faea6c5ae5aa99487234a7",
+    "experiments/pc_gpu/firmware_preflight.py": "a2670f702ca15dcac254e6b5b710c22ede721344"
+  }
+}

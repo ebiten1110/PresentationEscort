@@ -120,3 +120,15 @@ Phase 7設計: [../../docs/PHASE7_OPERATOR_CONSOLE.md](../../docs/PHASE7_OPERATO
 - 操作画面はPhase7と共通、ファームウェア状態には**VIRTUAL**と表示
 - `--serial-port` と同時使用不可、ハードウェア動作ステージなし
 - 設計: [../../docs/PHASE9_INTEGRATED_SIMULATION.md](../../docs/PHASE9_INTEGRATED_SIMULATION.md)
+
+## Phase 10：バージョン照合・ソース/履歴バックアップ・実機判定
+
+- 基準: `docs/PHASE10_CODE_BASELINE.json`（Phase 9の重要15ファイルをGit blob SHA-1で固定）
+- Piで確認: `python3 experiments/pc_gpu/phase10_release.py check`
+- ソース/履歴保存: `python3 experiments/pc_gpu/phase10_release.py backup --dest ~/PresentationEscort-backups`
+- 保存後のSHA-256確認: `python3 experiments/pc_gpu/phase10_release.py verify --backup-dir <保存先の実フォルダ名>`
+- 実機の合格表: `docs/PHASE10_HARDWARE_GATE_TEMPLATE.json`
+- オフライン判定: `python3 experiments/pc_gpu/phase10_gate.py --report docs/PHASE10_HARDWARE_GATE_TEMPLATE.json` （初期NO-GO）
+- Git履歴とソースのバックアップは**現在ESP32に焼かれているファームウェアを保存しない**
+- 既存本番Pi V8.8.3、実ESP32、GitHub mainは変更せず、motor出力は初期OFFのまま
+- 手順とGO/NO-GO条件: [../../docs/PHASE10_RELEASE_READINESS.md](../../docs/PHASE10_RELEASE_READINESS.md)

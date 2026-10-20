@@ -22,10 +22,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Phase 10 ancestry/rollback source audit
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Check pinned Phase 9 source baseline before testing
+        run: python experiments/pc_gpu/phase10_release.py check
       - name: Compile all experiment Python modules
         run: python -m compileall -q experiments/pc_gpu
       - name: Run PC-GPU protocol, target and safety unit tests
