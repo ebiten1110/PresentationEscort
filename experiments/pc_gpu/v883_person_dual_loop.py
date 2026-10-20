@@ -111,6 +111,15 @@ class V883PersonDualLoop:
         """Full reset; only safe when actual body is known idle/disarmed."""
         self.__init__()
 
+    def cancel_unsent_proposals(self) -> None:
+        """No motion/pose was delivered; permit proposal on a later frame."""
+        self.motion_pending = False
+        self.body_candidate = None
+        self.body_candidate_count = 0
+        self.last_pose_send_at = None
+        self.last_sent_yaw = None
+        self.last_sent_pitch = None
+
     def target_lost(self) -> FollowPlan:
         self.body_candidate = None
         self.body_candidate_count = 0

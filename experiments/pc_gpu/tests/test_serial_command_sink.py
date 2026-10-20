@@ -16,10 +16,20 @@ class FakeUart:
         self.settings = kwargs
         self.writes = []
         self.short_write = False
+        self.received = b""
 
     def write(self, payload):
         self.writes.append(payload)
         return len(payload) - 1 if self.short_write else len(payload)
+
+    @property
+    def in_waiting(self):
+        return len(self.received)
+
+    def read(self, size):
+        data = self.received[:size]
+        self.received = self.received[size:]
+        return data
 
     def close(self):
         self.is_open = False
@@ -73,6 +83,33 @@ class SerialCommandTests(unittest.TestCase):
         sink.close()
         self.assertEqual(recorded["baudrate"], 115200)
         self.assertEqual(recorded["write_timeout"], 0.15)
+
+    def test_safe_head_pose_accepted(self):
+        sink, uart = self.make()
+        sink.send("HEAD_POSE_SET:-20.0,12.0")
+        self.assertEqual(uart.writes[-1], b"HEAD_POSE_SET:-20.0,12.0\n")
+
+    def test_head_outside_range_denied(self):
+        sink, uart = self.make()
+        for command in ("HEAD_POSE_SET:30,0", "HEAD_POSE_SET:0,13",
+                        "HEAD_POSE_SET:NAN,0", "HEAD_POSE_SET:1,Infinity"):
+            with self.assertRaises(ValueError):
+                sink.send(command)
+        self.assertEqual(uart.writes, [])
+
+    def test_status_and_head_status_allowed(self):
+        sink, uart = self.make()
+        sink.send("STATUS")
+        sink.send("HEAD_STATUS")
+        self.assertEqual(uart.writes, [b"STATUS\n", b"HEAD_STATUS\n"])
+
+    def test_bounded_nonblocking_uart_read(self):
+        sink, uart = self.make()
+        self.assertEqual(sink.read_available(), b"")
+        uart.received = b"123456"
+        self.assertEqual(sink.read_available(max_bytes=3), b"123")
+        self.assertEqual(sink.read_available(), b"456")
+        self.assertEqual(sink.read_available(), b"")
 
     def test_requires_port(self):
         with self.assertRaises(ValueError):

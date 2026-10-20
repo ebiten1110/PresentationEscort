@@ -63,3 +63,16 @@ python3 experiments/pc_gpu/pi_safe_stop_probe.py --enable-serial --port /dev/tty
 - 設計上の制約: [../../docs/PHASE4_V883_REMOTE_CONTROL_ADAPTER.md](../../docs/PHASE4_V883_REMOTE_CONTROL_ADAPTER.md)
 
 実機には命令を出さない。元V8.8.3の起動スクリプトは変更していない。
+
+## Phase 5: ESP32テレメトリと頭部制御ゲート（ソフトウェア検証）
+
+- `esp32_telemetry.py`: 既存の`[HeadState]`、`Walking State:`、`[Walking] State:`、`Busy:`を解析。状態が古ければ不許可
+- `esp32_feedback_poller.py`: 同じシリアルポートに対し`STATUS`を定期照会し、読み取り結果をプランナーへ渡す。**インスタンス作成だけではシリアルポートを開かない**
+- `serial_command_sink.py`: `HEAD_POSE_SET`（Yaw±20°、Pitch±12°）、`STATUS`、`HEAD_STATUS`を追加。非同期読み取りは`read_available`
+- `motion_gateway.py`: AUTO + 有効人物検出状態のみ頭部角度命令を認可。ESTOP/SAFEでは頭部を動かさない
+- `remote_person_controller.py`: 検出→目標計算→新しいESP32状態→安全ゲートをまとめた接続部。**`enable_actuation=False`が初期値**
+- テスト：`tests/test_esp32_telemetry.py`、`tests/test_phase5_head_gate.py`、`tests/test_esp32_feedback_poller.py`
+
+注意：以前のESP32ファームウェアは引き続き未変更です。ここでのSTATUS/HEAD_STATEは**実機の新しいファームウェアを書き込まず既存の出力を利用**します。ただし、現在実機に入っているファームウェアがGitHub版と一致する保証はありません。
+
+`enable_actuation=True`は実機安全停止とシリアル読み戻しの検証前に有効化しないこと。ESP32独立watchdog・Piクラッシュ時の停止はまだ実装・検証していません。実機では安全に利用できるよう、別のハードウェア停止装置も必要です。

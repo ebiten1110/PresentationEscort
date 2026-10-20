@@ -192,6 +192,53 @@ class PiMotionGateway:
                 self._stop_locked("MOTION_SEND_FAILED", force=True)
                 return ControlDecision(False, "STOP", "MOTION_SEND_FAILED", Mode.ESTOP)
 
+    def request_head_pose(
+        self,
+        yaw_deg: float,
+        pitch_deg: float,
+        *,
+        now: Optional[float] = None,
+    ) -> ControlDecision:
+        """Only AUTO with fresh detection may move the head.
+
+        Enforce an independent numeric range check even if the transport
+        validates the formatted command. An ESTOP never centers the head
+        automatically (centering itself is an actuator movement).
+        """
+        import math
+
+        with self._lock:
+            if self._requires_watchdog and not (self._thread and self._thread.is_alive()):
+                self.safety.emergency_stop()
+                self._stop_locked("WATCHDOG_NOT_RUNNING", force=True)
+                return ControlDecision(False, "STOP", "WATCHDOG_NOT_RUNNING", Mode.ESTOP)
+            if self._transport_fault or self._closed:
+                return ControlDecision(False, "STOP", "SERIAL_FAULT_OR_CLOSED", self.safety.mode)
+            self._tick_locked(now)
+            if (
+                not math.isfinite(yaw_deg)
+                or not math.isfinite(pitch_deg)
+                or not (-20 <= yaw_deg <= 20 and -12 <= pitch_deg <= 12)
+            ):
+                return ControlDecision(False, "STOP", "HEAD_ANGLE_REJECTED", self.safety.mode)
+            current = self.safety._now(now)
+            if (
+                self.safety.mode != Mode.AUTO
+                or not self.safety._link_is_fresh(current)
+                or not self.safety._target_is_fresh(current)
+            ):
+                return ControlDecision(False, "STOP", "HEAD_NOT_AUTHORIZED", self.safety.mode)
+            command = f"HEAD_POSE_SET:{yaw_deg:.1f},{pitch_deg:.1f}"
+            try:
+                self.sink.send(command)
+                self._last_command = command
+                return ControlDecision(True, command, "AUTHORIZED", self.safety.mode)
+            except Exception:
+                self._transport_fault = True
+                self.safety.emergency_stop()
+                self._stop_locked("HEAD_SEND_FAILED", force=True)
+                return ControlDecision(False, "STOP", "HEAD_SEND_FAILED", Mode.ESTOP)
+
     def emergency_stop(self) -> None:
         with self._lock:
             self.safety.emergency_stop()
