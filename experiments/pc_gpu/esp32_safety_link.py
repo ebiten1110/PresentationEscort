@@ -89,9 +89,20 @@ class Esp32SafetyLink:
                         self.arm_requested_at = None
                         self._accepted = False
                     elif self.state != "ARMED":
-                        self.requested_mode = None
-                        self.arm_requested_at = None
-                        self._accepted = False
+                        # STATUS sent before SAFETY_ARM can arrive after the
+                        # operator has initiated a new handshake. Until an
+                        # explicit ARM_ACCEPTED is seen, an old DISARMED line
+                        # is informational only. No motion is allowed while
+                        # pending, and unanswered requests still time out.
+                        stale_disarmed = (
+                            self.state == "DISARMED"
+                            and self.requested_mode is not None
+                            and not self._accepted
+                        )
+                        if not stale_disarmed:
+                            self.requested_mode = None
+                            self.arm_requested_at = None
+                            self._accepted = False
         return authorized_mode
 
     def fresh_armed(self, now: Optional[float] = None) -> bool:

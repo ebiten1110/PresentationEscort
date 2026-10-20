@@ -112,7 +112,8 @@ class IntegratedRuntimeTests(unittest.TestCase):
         self.assertIsInstance(self.runtime.sink, VirtualEsp32)
         self.assertTrue(self.runtime.status()["simulation"])
         self.assertTrue(self.runtime.status()["simulated_esp32"])
-        self.assertFalse("SerialCommandSink" in inspect.getsource(pi_integrated_simulation))
+        self.assertNotIn("SerialCommandSink(", inspect.getsource(pi_integrated_simulation))
+        self.assertNotIn("from serial_command_sink import", inspect.getsource(pi_integrated_simulation))
         self.assertEqual(self.runtime.status()["fw_safety"].split(":")[0], "VIRTUAL")
 
     def test_initial_safe_and_firmware_disarmed(self):

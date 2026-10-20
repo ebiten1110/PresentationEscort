@@ -35,6 +35,19 @@ class FirmwareSafetyLinkTests(unittest.TestCase):
         self.assertEqual(self.fw.feed(b"[Safety] State: ARMED\n", now=10.07), "AUTO")
         self.assertTrue(self.fw.fresh_armed(now=10.08))
 
+    def test_stale_disarmed_before_arm_ack_does_not_cancel_request(self):
+        self.assertTrue(self.fw.request_arm("AUTO", now=10.0))
+        self.assertIsNone(self.fw.feed(b"[Safety] State: DISARMED\n", now=10.02))
+        self.assertEqual(self.fw.requested_mode, "AUTO")
+        self.assertIsNone(self.fw.feed(b"[Safety] ARM_ACCEPTED\n", now=10.05))
+        self.assertEqual(self.fw.feed(b"[Safety] State: ARMED\n", now=10.06), "AUTO")
+
+    def test_latched_status_during_pending_arm_still_aborts(self):
+        self.assertTrue(self.fw.request_arm("MANUAL", now=10.0))
+        self.fw.feed(b"[Safety] State: LATCHED\n", now=10.02)
+        self.assertIsNone(self.fw.requested_mode)
+        self.assertFalse(self.fw.fresh_armed(now=10.03))
+
     def test_reject_no_automatic_retry(self):
         self.fw.request_arm("AUTO", now=10.0)
         self.fw.feed(b"[Safety] ARM_REJECTED\n[Safety] State: LATCHED\n", now=10.1)
