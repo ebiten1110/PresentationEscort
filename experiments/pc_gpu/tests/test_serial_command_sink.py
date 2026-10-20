@@ -128,6 +128,19 @@ class SerialCommandTests(unittest.TestCase):
         sink.send("SAFETY_VERSION")
         self.assertEqual(uart.writes[-1], b"SAFETY_VERSION\n")
 
+    def test_linux_serial_port_exclusive(self):
+        import sys
+        recorded = {}
+        def factory(**kwargs):
+            recorded.update(kwargs)
+            return FakeUart()
+        sink = SerialCommandSink("/dev/ttyFAKE", serial_factory=factory)
+        sink.close()
+        if sys.platform.startswith("linux"):
+            self.assertIs(recorded["exclusive"], True)
+        else:
+            self.assertNotIn("exclusive", recorded)
+
     def test_requires_port(self):
         with self.assertRaises(ValueError):
             SerialCommandSink("", serial_factory=FakeUart)
