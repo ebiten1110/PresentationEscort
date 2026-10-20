@@ -33,7 +33,9 @@
   async function act(action) {
     try {
       const res = await call("/api/action", {action});
-      byId("feedback").textContent = res.ok ? action.toUpperCase() + " 実行" : res.error;
+      byId("feedback").textContent = res.pending
+        ? action.toUpperCase() + "：模擬ESP32の応答待ち"
+        : res.ok ? action.toUpperCase() + " 実行" : res.error;
       await refresh();
     } catch (err) {
       byId("feedback").textContent = "操作失敗: " + err.message;

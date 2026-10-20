@@ -110,3 +110,13 @@ Phase 7設計: [../../docs/PHASE7_OPERATOR_CONSOLE.md](../../docs/PHASE7_OPERATO
 - SAFETY_VERSIONの返信は V1 / TimeoutMs=750 と DISARMED の両方がそろった場合のみ互換と判定する
 - **走行や頭部を動かす起動モードはまだ作らない**。Arduino/C++のwatchdogテスト成功と実機停止安全性を混同しない
 - 詳細：docs/PHASE8_DEPLOYMENT_PRECHECK.md
+
+## Phase 9：単一プロセス統合シミュレーション
+
+- `pi_integrated_simulation.py`: UI/API、GPU検出受信、V8.8.3人物追従計算、Pi安全ゲート、`VirtualEsp32`状態フィードバックを同一Piプロセスで統合
+- `virtual_esp32.py`: ESP32 V1 ACK、750ms watchdog、Busy/Head状態、旋回/STOPを**メモリ上だけで**再現
+- 起動: `python3 experiments/pc_gpu/pi_deployment_launcher.py --stage integrated`
+- 実PC/GPUへ接続: `--stage integrated --pc-host <Windows PCのIP>`（ESP32物理デバイスは使わない）
+- 操作画面はPhase7と共通、ファームウェア状態には**VIRTUAL**と表示
+- `--serial-port` と同時使用不可、ハードウェア動作ステージなし
+- 設計: [../../docs/PHASE9_INTEGRATED_SIMULATION.md](../../docs/PHASE9_INTEGRATED_SIMULATION.md)

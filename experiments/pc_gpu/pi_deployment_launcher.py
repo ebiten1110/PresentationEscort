@@ -79,7 +79,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--stage", default="audit",
-        choices=("audit", "console", "diagnostic"),
+        choices=("audit", "console", "integrated", "diagnostic"),
         help="audit is the safe, no-device default",
     )
     parser.add_argument("--pc-host", default=None, help="GPU PC IP (console only)")
@@ -102,15 +102,19 @@ def run(argv: Optional[list[str]] = None) -> int:
         print("Offline audit complete. No camera, serial port, or motors opened.")
         return 0
 
-    if args.stage == "console":
+    if args.stage in ("console", "integrated"):
         if args.serial_port or args.servo_power_off_confirmed:
             print("Serial flags are forbidden in dry-run console mode.")
             return 2
-        from pi_operator_console import main as run_console
         console_args = ["--port", str(args.console_port)]
         if args.pc_host:
             console_args.extend(("--pc-host", args.pc_host))
-        print("Launching memory-only operator console. Motor output DISABLED.")
+        if args.stage == "integrated":
+            from pi_integrated_simulation import main as run_console
+            print("Launching GPU + simulated ESP32 only. Real motor output DISABLED.")
+        else:
+            from pi_operator_console import main as run_console
+            print("Launching memory-only operator console. Motor output DISABLED.")
         run_console(console_args)
         return 0
 

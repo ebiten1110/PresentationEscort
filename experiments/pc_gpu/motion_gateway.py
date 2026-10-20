@@ -64,15 +64,17 @@ class PiMotionGateway:
         self._thread: Optional[threading.Thread] = None
         self._transport_fault = False
         self._motion_pending = False
+        self._head_active = False
         self._last_command = "NONE"
         self._stop_reason = "STARTUP"
         self._closed = False
 
     def _stop_locked(self, reason: str, *, force: bool = False) -> None:
         self._stop_reason = reason
-        if not force and not self._motion_pending:
+        if not force and not (self._motion_pending or self._head_active):
             return
         self._motion_pending = False
+        self._head_active = False
         try:
             self.sink.send("STOP")
             self._last_command = "STOP"
@@ -116,7 +118,10 @@ class PiMotionGateway:
                         self.safety.emergency_stop()
                         self._stop_locked("SAFETY_PING_FAILED", force=True)
         if self.safety.mode not in (Mode.AUTO, Mode.MANUAL):
-            self._stop_locked(self.safety.reason)
+            # Firmware may still be ARMED after a head-only AUTO cycle.
+            # Force one STOP even if there is no body motion pending.
+            fw_needs_disarm = fw is not None and fw.state == "ARMED"
+            self._stop_locked(self.safety.reason, force=fw_needs_disarm)
 
     def check_watchdog(self, now: Optional[float] = None) -> GatewayStatus:
         with self._lock:
@@ -126,7 +131,8 @@ class PiMotionGateway:
     def _status_locked(self, now: Optional[float] = None) -> GatewayStatus:
         result = self.safety.status(now=now)
         if result.mode not in (Mode.AUTO, Mode.MANUAL):
-            self._stop_locked(result.reason)
+            fw = self._firmware_safety
+            self._stop_locked(result.reason, force=bool(fw and fw.state == "ARMED"))
         return GatewayStatus(
             safety=result,
             last_command=self._last_command,
@@ -195,6 +201,12 @@ class PiMotionGateway:
             elif requested == "MANUAL":
                 if not self.safety.arm_manual(now=current):
                     self._stop_locked("MANUAL_ARM_REJECTED", force=True)
+
+    def firmware_arm_pending(self, requested_mode: str) -> bool:
+        """Read-only handshake status for the operator UI; not permission to move."""
+        with self._lock:
+            fw = self._firmware_safety
+            return bool(fw is not None and fw.requested_mode == requested_mode)
 
     def firmware_safety_status(self) -> str:
         with self._lock:
@@ -311,6 +323,7 @@ class PiMotionGateway:
             try:
                 self.sink.send(command)
                 self._last_command = command
+                self._head_active = True
                 return ControlDecision(True, command, "AUTHORIZED", self.safety.mode)
             except Exception:
                 self._transport_fault = True
