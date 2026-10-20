@@ -4,6 +4,7 @@
 #include "light_control.h"
 #include "command.h"
 #include "walking.h"
+#include "safety_runtime.h"
 
 static String inputBuffer = "";
 static String lastCommand = "";
@@ -56,6 +57,7 @@ static void printStatus() {
   Serial.print("Last Command: ");
   Serial.println(lastCommand);
   printHeadStatus();
+  printSafetyStatus();
   Serial.println("Control: V8.8_DUAL_LOOP_CAMERA_BODY");
   Serial.println("=====================================");
 }
@@ -74,6 +76,8 @@ void printCommandHelp() {
   Serial.println("RGB_GREEN / RGB_BLUE / RGB_YELLOW");
   Serial.println("RGB_PURPLE / RGB_ERROR");
   Serial.println("STATUS / HELP");
+  Serial.println("SAFETY_ARM / SAFETY_PING / SAFETY_STATUS");
+  Serial.println("SAFETY_DISARM / SAFETY_ESTOP / SAFETY_RESET");
   Serial.println("=======================================");
 }
 
@@ -81,15 +85,54 @@ static void executeCommand(String command) {
   command = normalizeCommand(command);
   if (command.length() == 0) return;
 
-  lastCommand = command;
+  // SAFETY_* commands are processed first, and never fed to motion dispatch.
+  // Head movement is an actuator command, so it must also pass the safety gate.
+  if (handleSafetyProtocolCommand(command)) {
+    lastCommand = command;
+    return;
+  }
 
-  // 高頻度の絶対角度・状態要求はログを省略し、
-  // シリアル帯域とログ書き込み負荷を抑える。
-  if (handleHeadSetCommand(command)) return;
+  // A STOP (including the original 'S' alias) must always be honored.
+  if (command == "S") command = CMD_STOP;
+  if (command == CMD_STOP) {
+    lastCommand = CMD_STOP;
+    safetyDisarmAndStop();
+    return;
+  }
+
+  // Read-only queries and LED indications remain available while disarmed.
   if (command == CMD_HEAD_STATUS) {
     printHeadStatus();
     return;
   }
+  if (command == CMD_STATUS) {
+    printStatus();
+    return;
+  }
+  if (command == CMD_HELP) {
+    printCommandHelp();
+    return;
+  }
+  if (
+    command == CMD_RGB_OFF || command == CMD_RGB_WHITE
+    || command == CMD_RGB_RED || command == CMD_RGB_GREEN
+    || command == CMD_RGB_BLUE || command == CMD_RGB_YELLOW
+    || command == CMD_RGB_PURPLE || command == CMD_RGB_ERROR
+    || command == CMD_LIGHT_ON || command == CMD_LIGHT_OFF
+    || command == CMD_LIGHT_TOGGLE
+  ) {
+    // Keep diagnostics usable even if drive commands are blocked.
+    // Handling falls through to the original LED dispatcher below.
+  } else if (!isSafetyMotionAllowed()) {
+    Serial.print("[Safety] MOTION_REJECTED=");
+    Serial.println(command);
+    return;
+  }
+
+  lastCommand = command;
+
+  // Preserve original head motion parsing and all calibrated movements.
+  if (handleHeadSetCommand(command)) return;
 
   Serial.print("[SerialReceive] Received=");
   Serial.println(command);

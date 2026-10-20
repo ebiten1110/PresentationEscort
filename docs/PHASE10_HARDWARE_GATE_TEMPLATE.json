@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "project": "PresentationEscort",
+  "event_date": "2026-10-28",
+  "evaluation": "NOT_APPROVED",
+  "operator_attestation": "",
+  "observer_attestation": "",
+  "checks": {
+    "P01_physical_wiring_servo_voltage": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P02_current_esp32_binary_backup": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P03_pi_and_esp32_version_compatibility": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P04_power_cutoff_independent_of_software": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P05_startup_disarmed_and_no_unintended_motion": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P06_head_yaw_pitch_limits_on_support": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P07_body_turn_direction_on_support": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P08_stop_and_estop_on_support": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P09_pi_usb_gpu_disconnection_recovery": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P10_loss_of_presenter_multiple_people": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P11_manual_remote_deadman_stop": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    },
+    "P12_five_minute_supervised_rehearsal": {
+      "status": "NOT_RUN",
+      "evidence": ""
+    }
+  },
+  "notes": "Only physical observations count. Software CI tests never substitute for these checks. No automatic actuator enabling from this file."
+}

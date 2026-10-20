@@ -6,6 +6,7 @@
 #include "serial_receive.h"
 #include "head_control.h"
 #include "light_control.h"
+#include "safety_runtime.h"
 
 void setup() {
   Serial.begin(115200);
@@ -23,11 +24,14 @@ void setup() {
   initHeadControl();
   initLightControl();
   initSerialReceive();
+  initSafetyRuntime();
 
   Serial.println("[Main] Setup complete");
 }
 
 void loop() {
+  // Independent of Pi/GPU and checked BEFORE processing queued UART bytes.
+  updateSafetyRuntime();
   updateSerialReceive();
   updateWalking();
   updateHeadControl();
