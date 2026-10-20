@@ -1,4 +1,4 @@
-"""Safety tests are RECORDED ONLY as of 2026-10-20; do not run until approval."""
+"""Software-only safety tests (CI runs); physical hardware tests are deferred."""
 from __future__ import annotations
 
 import sys
@@ -93,6 +93,29 @@ class SafetyManagerTests(unittest.TestCase):
     def test_invalid_policy_rejected(self):
         with self.assertRaises(ValueError):
             SafetyPolicy(link_timeout_s=0)
+
+    def test_manual_arm_does_not_require_gpu(self):
+        s = SafetyManager()
+        self.assertTrue(s.arm_manual(now=20.0))
+        self.assertTrue(s.authorize("TRACK_LEFT", source="MANUAL", now=20.05).approved)
+
+    def test_manual_survives_gpu_disconnect(self):
+        s = SafetyManager()
+        self.assertTrue(s.arm_manual(now=20.0))
+        s.connection_lost()
+        self.assertEqual(s.mode, Mode.MANUAL)
+        self.assertTrue(s.authorize("TRACK_RIGHT", source="MANUAL", now=20.08).approved)
+
+    def test_manual_deadman_applies_without_gpu(self):
+        s = SafetyManager()
+        s.arm_manual(now=20.0)
+        s.tick(now=20.50)
+        self.assertEqual(s.mode, Mode.SAFE)
+
+    def test_auto_does_not_survive_gpu_disconnect(self):
+        self.s.arm_auto(now=10.3)
+        self.s.connection_lost()
+        self.assertEqual(self.s.mode, Mode.SAFE)
 
     def test_status_ready_only_not_armed(self):
         status = self.s.status(now=10.25)

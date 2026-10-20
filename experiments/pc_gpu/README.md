@@ -27,3 +27,29 @@ Production V8.8.3を変更せず、Pi USBカメラ映像をPC/GPUへ送り、人
 - 既存ESP32の前後パルスはSTOPが届いてもそのパルス終了後の停止となる。
 - 初期状態で前後移動はallow_translation=Falseとし、実機校正まで無効。
 - この段階でのソフトウェアテスト合格は、実機安全性を保証しない。
+
+## Pi側のSTOP送信ゲート（2026-10-20追加）
+
+- `motion_gateway.py`: SAFE/AUTO/MANUAL/ESTOP状態に従うコマンド送信ゲート。GPU応答待ちとは独立のwatchdogスレッド（標準監視頻度50ms）。
+- `serial_command_sink.py`: 許可されたモーター命令のみESP32の115200bps USBシリアルへ送信。実ポートは**オブジェクト生成時のみ開く**。
+- `pi_safe_stop_probe.py`: Pi→ESP32のSTOPのみ確認する小ツール。デフォルトは**完全なメモリDry-run**。
+- `pi_tracking_dry_run.py`: MotionGateway/MemoryCommandSinkを使用するので、これまで同様**ESP32へのアクセスはゼロ**。
+
+### STOPのみのソフトウェアDry-run
+```bash
+python3 experiments/pc_gpu/pi_safe_stop_probe.py
+```
+
+### 実機用の予約手順（ユーザーの実機テスト再開指示まで実行しない）
+サーボの外部電源をOFFにし、現在のESP32ファームウェアとUSBポート名を確認後、明示した場合に限り:
+```bash
+python3 experiments/pc_gpu/pi_safe_stop_probe.py --enable-serial --port /dev/ttyUSB0
+```
+注意：ポートOPEN時ESP32が再起動し、サーボの初期姿勢指令が走るコードがある。**外部サーボ電源を必ず切る。** 出力側の電気的状態やSTOPの実際の効果はまだ未確認。
+
+### 重要な制約
+- Pi側watchdogは**Pythonプロセスが動いている間だけ**機能する。PiフリーズやUSB抜去でSTOPできるとは限らない。ESP32側の独立watchdogが今後必要。
+- ESP32 `stopWalking()` は前後TRACKを現在の短いパルス終了まで止めないことがあるため、物理的緊急停止と等価ではない。
+- 停止コマンドはシリアルwriteが受け付けられたことまでしか検査できず、ESP32側の受理ACKはまだない。
+- **自律モーションを有効にするエントリーポイントはまだ作っていない。** モーター稼働前にhead/body二重ループの統合と検証が必要。
+- MANUALはAI推論リンクが途絶えても動作可能とする設計だが、将来UIには認証と別経路の操作デッドマンが必要。

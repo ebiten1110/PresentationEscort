@@ -118,7 +118,10 @@ class SafetyManager:
         self.last_link_at = None
         self.last_target_at = None
         self.confirmed_frames = 0
-        self.disarm("LINK_LOST")
+        # MANUAL is a separate operator channel: it must remain usable
+        # when the AI/PC inference link fails. Deadman still applies.
+        if self.mode == Mode.AUTO:
+            self.disarm("LINK_LOST")
 
     def _link_is_fresh(self, current: float) -> bool:
         return (
@@ -137,9 +140,8 @@ class SafetyManager:
         current = self._now(now)
         if self.mode == Mode.ESTOP:
             return
-        if not self._link_is_fresh(current):
-            if self.mode != Mode.SAFE or self.reason != "LINK_TIMEOUT":
-                self.disarm("LINK_TIMEOUT")
+        if self.mode == Mode.AUTO and not self._link_is_fresh(current):
+            self.disarm("LINK_TIMEOUT")
             self.confirmed_frames = 0
             self.last_target_at = None
             return
@@ -173,7 +175,10 @@ class SafetyManager:
             self.confirmed_frames = 0
             self.last_target_at = None
             self.last_link_at = None
-            self.disarm("STALE_OR_INVALID_RESULT")
+            # A bad AI response stops AUTO, but MANUAL is independently
+            # supervised so it can still recover a malfunctioning AI.
+            if self.mode == Mode.AUTO:
+                self.disarm("STALE_OR_INVALID_RESULT")
             return
 
         self.last_link_at = current
@@ -206,7 +211,9 @@ class SafetyManager:
     def arm_manual(self, now: Optional[float] = None) -> bool:
         current = self._now(now)
         self.tick(current)
-        if self.mode == Mode.ESTOP or not self._link_is_fresh(current):
+        # Operator MANUAL must be available without a PC inference link.
+        # Authentication must occur at the operator interface.
+        if self.mode == Mode.ESTOP:
             return False
         self.mode = Mode.MANUAL
         self.reason = "OPERATOR_ARMED_MANUAL"
@@ -241,10 +248,10 @@ class SafetyManager:
             return ControlDecision(False, "STOP", "TRANSLATION_DISABLED", self.mode)
         if origin not in (Mode.AUTO.value, Mode.MANUAL.value) or origin != self.mode.value:
             return ControlDecision(False, "STOP", "MODE_MISMATCH_OR_DISARMED", self.mode)
-        if not self._link_is_fresh(current):
-            self.disarm("LINK_TIMEOUT")
-            return ControlDecision(False, "STOP", self.reason, self.mode)
         if self.mode == Mode.AUTO:
+            if not self._link_is_fresh(current):
+                self.disarm("LINK_TIMEOUT")
+                return ControlDecision(False, "STOP", self.reason, self.mode)
             if not self._target_is_fresh(current):
                 self.disarm("TARGET_TIMEOUT")
                 return ControlDecision(False, "STOP", self.reason, self.mode)
