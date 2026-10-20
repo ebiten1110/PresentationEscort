@@ -83,3 +83,19 @@ python3 experiments/pc_gpu/pi_safe_stop_probe.py --enable-serial --port /dev/tty
 - PiはARM_ACCEPTEDとState: ARMEDの確認後にのみAUTO/MANUALへ移行し、監視スレッドが定期PING。
 - 片側だけ更新すると旧版は走行できない。実機のフラッシュは未実施。
 - 詳細: ../../docs/PHASE6_ESP32_WATCHDOG.md
+
+## Phase 7：Piオペレーター操作画面（初期は実機出力OFF）
+
+- 起動: `python3 experiments/pc_gpu/pi_operator_console.py`
+- PC↔Pi人物検出を接続したDry-run起動: `python3 experiments/pc_gpu/pi_operator_console.py --pc-host <GPU_PC_IP>`
+- Pi上の待受は **127.0.0.1:8766限定**。LAN全体に公開しない
+- PCからは `ssh -L 8766:127.0.0.1:8766 pi@<PI_IP>` でトンネルを作り、ブラウザで `http://127.0.0.1:8766/` を開く
+- Piターミナルに表示されるランダムなトークンを画面に入力（ブラウザ内だけに保持）
+- AUTO／MANUAL切替・左右Hold操作・STOP・ESTOP・RESET・GPU/人物/RTT/最後の安全命令を表示
+- マウス/タッチ操作の終了・画面移動・ブラウザ非表示でSTOP要求を送る。さらにPi側MANUALデッドマン350msで停止
+- **操作コマンドはMemoryCommandSinkにのみ記録**。SerialCommandSinkを作成しないためESP32は操作されない
+- **前後移動はこのUIで提供しない**。対象距離が未校正であるため
+- CLIトークン／ローカルSSHトンネルのみ。公開HTTP・VPNなしLAN配信・ポート開放は禁止
+- APIテスト: `tests/test_operator_console.py` をGitHub CIで実施。実機UIの表示・タッチ操作は後日
+
+Phase 7設計: [../../docs/PHASE7_OPERATOR_CONSOLE.md](../../docs/PHASE7_OPERATOR_CONSOLE.md)

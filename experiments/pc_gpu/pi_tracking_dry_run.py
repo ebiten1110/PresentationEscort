@@ -119,7 +119,7 @@ def main() -> None:
         gateway.connection_lost()
         print(f"[Safety] PC connection unavailable: {exc}")
     finally:
-        safety.connection_lost()
+        gateway.connection_lost()
         gateway.close()
         camera.release()
         print("[Safety] DRY RUN stopped; motors were never enabled.")
