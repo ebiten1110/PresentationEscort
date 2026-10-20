@@ -64,3 +64,29 @@ Raspberry Pi 3 A+の現在環境、ESP32の実際の書込版、サーボの配�
 - V8.8.3二重ループに新ゲートを接続する作業と実機走行
 
 前記の「45件合格」は同日の**以前の状態**の記録。上記の**72件合格が現時点の最新版コードに対応する結果**。
+
+## Phase 4：V8.8.3相当のリモート人物追従計算（2026-10-20）
+
+- 現行プランナー・結合検証commit: `e97ed5388d135058ac2c7d65422bebffb85b5f40`
+- GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39349542489
+- GitHub CI（Linux/Python 3.11.17）にて`compileall`完了、**95 tests / OK / 0 failures**
+- 以前の72件に対し、V8.8.3相当計画17件 + 人物検出→安全ゲート統合6件を追加
+
+検証した動作:
+- 320x240→V8.8.3基準640x480換算したHead Yaw/Pitch制御
+- Yaw±20°, Pitch±12°, デッドゾーン、最大角度増分、更新間隔
+- 物理確認済みカメラ座標の符号とBody旋回方向（負→TRACK_LEFT、正→TRACK_RIGHT）
+- 体Yawフィードバックの鮮度なし/ESP32 Busy時はBodyコマンド不生成
+- 2フレーム継続確認、ESP32完了通知後のクールダウン、一回限りの動作候補
+- 検出枠の上下欠けが疑われるときはPitchを保持
+- 人物ロスト、GPU処理停止、未ARM状態はPiMotionGatewayでSTOPまたは動作拒否
+- 前後移動コマンドは人物検出BBoxから一切生成しない
+
+実機確認保留:
+- 実サーボの現在Yaw/Pitchのシリアル読み戻し
+- ESP32 Busy/IDLEとモーション完了ACKの実機検証
+- 角度候補HEAD_POSE_SETを、SAFE/ESTOPを通す実シリアル出力へ接続する作業
+- ESP32独立watchdogと物理停止
+- 実機の動作方向、推論遅延下での旋回・頭部追従、距離校正
+
+**注**: V8.8.3の原本は未変更。新プランナーは数式と物理校正パラメータを移植した独立実装であり、元のHeadPoseControllerを直接呼んでいない。モーター稼働を解禁した状態ではない。
