@@ -15,6 +15,7 @@ from detection_protocol import DetectionResult, recv_json, send_message
 from person_target_adapter import detection_to_person_target
 from pi_stream_client import encode_frame
 from motion_gateway import MemoryCommandSink, PiMotionGateway
+from v883_person_dual_loop import V883PersonDualLoop
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,6 +37,7 @@ def main() -> None:
     args = parse_args()
     print("[Safety] DRY RUN ONLY - no ESP32 commands will be sent.")
     gateway = PiMotionGateway(MemoryCommandSink())
+    dual_loop = V883PersonDualLoop()
     gateway.start()
     camera = cv2.VideoCapture(args.camera_index)
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
@@ -62,10 +64,12 @@ def main() -> None:
 
                 if rtt_ms > args.max_rtt_ms:
                     gateway.observe_detection(False, rtt_ms)
+                    dual_loop.target_lost()
                     print(f"[Safety] STALE rtt={rtt_ms:.1f}ms; target discarded")
                     continue
                 if result.error:
                     gateway.connection_lost()
+                    dual_loop.target_lost()
                     print(f"[Safety] Detector error: {result.error}")
                     continue
 
@@ -77,13 +81,23 @@ def main() -> None:
                 gateway.observe_detection(target is not None, rtt_ms)
                 status = gateway.status().safety
                 if target is None:
+                    dual_loop.target_lost()
                     print(
                         f"[Target] NO_PERSON rtt={rtt_ms:.1f}ms "
                         f"mode={status.mode.value} reason={status.reason}"
                     )
                     continue
 
-                residual = target.residual_bearing_deg()
+                plan = dual_loop.step(
+                    target,
+                    now=time.monotonic(),
+                    head_yaw_feedback_deg=None,  # ESP32 telemetry not yet connected.
+                    head_feedback_fresh=False,
+                    body_idle=False,
+                )
+                # Proposed head/body actions are logged, not transmitted.
+                # This dry-run never sends servo or walking commands.
+                residual = plan.residual_deg
                 print(
                     "[Target] "
                     f"aim=({target.center_x},{target.aim_y}) "
@@ -91,7 +105,13 @@ def main() -> None:
                     f"residual={residual:+.1f}deg "
                     f"confidence={target.confidence:.2f} "
                     f"infer={result.inference_ms:.1f}ms rtt={rtt_ms:.1f}ms "
-                    f"mode={status.mode.value} auto_ready={status.auto_ready}"
+                    f"mode={status.mode.value} auto_ready={status.auto_ready} "
+                    f"head=({plan.yaw_target_deg:+.1f},{plan.pitch_target_deg:+.1f}) "
+                    f"bodyBearing={plan.body_bearing_deg:+.1f} "
+                    f"turnSuggestion={plan.suggested_body_turn or 'HOLD'} "
+                    f"bodyCommand={plan.body_command or 'BLOCKED'} "
+                    f"pitchOK={plan.pitch_tracking_enabled} "
+                    f"headFeedback={plan.bearing_from_feedback}"
                 )
     except KeyboardInterrupt:
         print("\n[Main] interrupted")
