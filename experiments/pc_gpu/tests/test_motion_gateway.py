@@ -11,6 +11,10 @@ from motion_gateway import MemoryCommandSink, PiMotionGateway
 from safety_manager import Mode, SafetyManager, SafetyPolicy
 
 
+class PretendHardwareSink(MemoryCommandSink):
+    requires_watchdog = True
+
+
 class FailingSink:
     def send(self, command):
         raise OSError("serial cable disconnected")
@@ -28,6 +32,14 @@ class GatewayTests(unittest.TestCase):
     def prime(g, now=10.0):
         for i in range(3):
             g.observe_detection(True, 130.0, now=now + i * 0.05)
+
+    def test_hardware_sink_requires_live_watchdog(self):
+        g, sink = self.make(sink=PretendHardwareSink())
+        self.assertFalse(g.arm_manual())
+        self.assertFalse(g.arm_auto())
+        g.start()
+        self.assertTrue(g.arm_manual())
+        self.assertEqual(sink.commands[0], "STOP")
 
     def test_initial_stop_and_disarmed(self):
         g, sink = self.make()

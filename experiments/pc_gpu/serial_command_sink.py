@@ -17,6 +17,8 @@ _ALLOWED = frozenset({
 class SerialCommandSink:
     """Bounded pyserial.write transport with a strict motor allowlist."""
 
+    requires_watchdog = True
+
     def __init__(
         self,
         port: str,

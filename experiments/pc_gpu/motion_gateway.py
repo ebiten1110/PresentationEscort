@@ -54,6 +54,7 @@ class PiMotionGateway:
         if not 0.01 <= poll_interval_s <= 0.25:
             raise ValueError("poll_interval_s must be 0.01 .. 0.25")
         self.sink = sink
+        self._requires_watchdog = bool(getattr(sink, "requires_watchdog", False))
         self.safety = safety if safety is not None else SafetyManager()
         self.poll_interval_s = poll_interval_s
         self._lock = threading.RLock()
@@ -144,6 +145,8 @@ class PiMotionGateway:
 
     def arm_auto(self, now: Optional[float] = None) -> bool:
         with self._lock:
+            if self._requires_watchdog and not (self._thread and self._thread.is_alive()):
+                return False
             if self._transport_fault or self._closed:
                 return False
             self._tick_locked(now)
@@ -154,6 +157,8 @@ class PiMotionGateway:
     def arm_manual(self, now: Optional[float] = None) -> bool:
         """Caller must authenticate operator independently of AI traffic."""
         with self._lock:
+            if self._requires_watchdog and not (self._thread and self._thread.is_alive()):
+                return False
             if self._transport_fault or self._closed:
                 return False
             self._tick_locked(now)
@@ -165,6 +170,10 @@ class PiMotionGateway:
         self, command: str, *, source: str, now: Optional[float] = None
     ) -> ControlDecision:
         with self._lock:
+            if self._requires_watchdog and not (self._thread and self._thread.is_alive()):
+                self.safety.emergency_stop()
+                self._stop_locked("WATCHDOG_NOT_RUNNING", force=True)
+                return ControlDecision(False, "STOP", "WATCHDOG_NOT_RUNNING", Mode.ESTOP)
             if self._transport_fault or self._closed:
                 return ControlDecision(False, "STOP", "SERIAL_FAULT_OR_CLOSED", self.safety.mode)
             self._tick_locked(now)
