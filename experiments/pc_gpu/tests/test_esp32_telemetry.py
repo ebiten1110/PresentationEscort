@@ -84,7 +84,7 @@ class TelemetryTests(unittest.TestCase):
         self.assertFalse(self.t.snapshot(now=9).head_fresh)
 
     def test_serial_noise_does_not_arm_telemetry(self):
-        self.t.feed(b" [HeadState] currentYaw=0 targetYaw=0 currentPitch=0 targetPitch=0 moving=NO\nGARBAGE\n", now=10)
+        self.t.feed(b"ZZ[HeadState] currentYaw=0 targetYaw=0 currentPitch=0 targetPitch=0 moving=NO\nGARBAGE\n", now=10)
         self.assertFalse(self.t.snapshot(now=10).head_fresh)
 
     def test_reset_removes_all_state(self):
