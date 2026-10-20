@@ -135,3 +135,16 @@ Raspberry Pi 3 A+の現在環境、ESP32の実際の書込版、サーボの配�
 - テスト中の修正：仮想時刻と実時刻の比較が混在していたテストを統一し、150件全合格。
 - ESP32物理モーションの向き・サーボの取り付け角・配線・電源・停止タイミングは**実機未検証**。
 - 重要：新ESP32ファームウェアでは旧V8.8.3のPi側プログラムが動作をARMできない。バージョン同時移行が必須。新ESP32コードはGitHubの開発ブランチだけに反映し、実機への書込は実施していない。
+
+## Phase 7 — Piローカル操作コンソール（2026-10-20）
+
+- 対象コード：`pi_operator_console.py`、`operator_console.html/css/js`、`tests/test_operator_console.py`
+- 実行方式：Piの127.0.0.1限定・SSHトンネルアクセス、毎起動ランダムトークン認証。
+- **Python構文確認と単体/HTTP APIテスト171件すべて合格**（追加操作画面検証21件）。
+- GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39355774838
+- 初回実行は171件中1件失敗：テストが画面内`Dry-run`を大文字`DRY`で比較していたため。期待文言を修正し全171件合格。
+- 検証対象：未認証拒否、Host/Origin制約、JSONサイズ/型、初期SAFE、AUTO起動要件、MANUAL左右とデッドマン350ms、STOP、ESTOPラッチ/解除、前後移動拒否、GPU検出→AUTO判定連携。
+- Raspberry PiのWeb操作画面は**実機モーターへアクセスする経路を持たない（MemoryCommandSink固定）**ため、このテストはロボット駆動の合格判定ではない。
+- 既存`pi_tracking_dry_run.py`の終了処理にあった未定義変数`safety`を`gateway`へ修正。ESP32へのアクセスは引き続きなし。
+
+実機で未実施：Pi上のWeb起動、SSHトンネル・モバイルブラウザ操作感、Piカメラ/RTX4060持続送受信、ESP32の物理停止、発表者追従、手動モーション、安全復帰。
