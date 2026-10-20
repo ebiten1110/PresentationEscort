@@ -143,3 +143,12 @@ Phase 7設計: [../../docs/PHASE7_OPERATOR_CONSOLE.md](../../docs/PHASE7_OPERATO
 - **V1サーバーや旧版の単一人物結果では安全なAUTOに進めない**
 - Phase10の不変ソフトウェアベースラインはそのまま。実機複数人AUTOは引き続きNO-GO。
 - 設計・制限: [../../docs/PHASE11_PRESENTER_LOCK.md](../../docs/PHASE11_PRESENTER_LOCK.md)
+
+## Phase 12：展示当日のオフライン安全リハーサル
+
+- 現物モーターやUSBシリアルを一切開かない安全診断：`python3 experiments/pc_gpu/phase12_rehearsal.py --output-dir ~/PresentationEscort-reports`
+- Phase10の重要ソース照合、VirtualESP32のSTOP・ARM・750ms通信断・発表者ロック消失の試験をまとめてJSONで記録
+- SHA256のチェックサム付き。これは証跡ファイルの破損検出であり、第三者署名ではない
+- バックアップ・現地12項目検査が未完了なら `readiness_evidence_complete=false`
+- **motor_activation_permitted は常にfalse**。このプログラムから実機運転を開始できない
+- 現地手順: [../../docs/PHASE12_SHOW_DAY_RUNBOOK.md](../../docs/PHASE12_SHOW_DAY_RUNBOOK.md)
