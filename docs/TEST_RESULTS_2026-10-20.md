@@ -148,3 +148,19 @@ Raspberry Pi 3 A+の現在環境、ESP32の実際の書込版、サーボの配�
 - 既存`pi_tracking_dry_run.py`の終了処理にあった未定義変数`safety`を`gateway`へ修正。ESP32へのアクセスは引き続きなし。
 
 実機で未実施：Pi上のWeb起動、SSHトンネル・モバイルブラウザ操作感、Piカメラ/RTX4060持続送受信、ESP32の物理停止、発表者追従、手動モーション、安全復帰。
+
+## Phase 8 — 段階的起動とESP32バージョン事前照合
+
+- 最新コード: feature/pc-gpu-follow-2026-10-28（commit a28789c2f67c9494c8bde00bab8b1002185b58aa）
+- GitHub Actions Python: https://github.com/ebiten1110/PresentationEscort/actions/runs/39357631575
+- **Python構文確認＋194 tests / OK / failures 0**
+- ESP32 C++状態機械・PlatformIO firmwareビルド: https://github.com/ebiten1110/PresentationEscort/actions/runs/39357504263 — 両ジョブ成功、物理書込なし
+- Phase8新規: firmware_preflight.py、pi_deployment_launcher.py、tests/test_firmware_preflight.py、SAFETY_VERSION応答、Linux Serial排他OPEN
+- デフォルト起動は静的auditのみで、カメラ、USB、サーボを開かない
+- コンソールはMemoryCommandSink固定。ESP32へのモーター指令なし
+- 診断モードは外部サーボ電源OFFの明示確認とシリアルポート名指定を要求。SAFETY_VERSION/SAFETY_STATUSのみ送信
+- 旧ファームウェア/バージョン不一致/ARMED/LATCHED/状態未確認では診断不合格。実機運転は許可しない
+- シリアル返信が分割された場合、バージョンとDISARMEDの両方を受信するまで判定保留とする修正を実施
+- Pi上のUSBシリアル所有を排他モードとして要求（ソフトウェアテスト成功、実機未確認）
+
+制限：バージョン診断もESP32実機では実行していない。物理的な電源・サーボの安全性は不明。実モーターを動かす統合ランチャーはまだ公開していない。今後は単一UART所有・検出/頭部/体/STOP状態と操作UIの統合が必要。
