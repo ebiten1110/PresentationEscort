@@ -90,3 +90,34 @@ Raspberry Pi 3 A+の現在環境、ESP32の実際の書込版、サーボの配�
 - 実機の動作方向、推論遅延下での旋回・頭部追従、距離校正
 
 **注**: V8.8.3の原本は未変更。新プランナーは数式と物理校正パラメータを移植した独立実装であり、元のHeadPoseControllerを直接呼んでいない。モーター稼働を解禁した状態ではない。
+
+## Phase 5：ESP32 Telemetry / Head Safety Gate
+
+- GitHub commit: `962db8e983f15c1bc31d989e60b4c5fb21f1c4bb`
+- GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39350597767
+- CI: Python 3.11、`python -m compileall -q experiments/pc_gpu`成功、**132/132 unit tests成功**
+- 今回追加: ESP32テレメトリの解析、UART状態監視/TTL、頭部命令の範囲とARM制限、Head/Body疑似統合
+
+### 具体的に検証したこと
+
+- `[HeadState]`形式のYaw/Pitch読み取り、シリアル分割/ノイズ/不正数値の拒否
+- `Walking State: IDLE`と`Busy: NO`の両方が新鮮な場合だけIDLE扱い
+- 0.45秒以内の頭部角度、0.40秒以内の歩行状態・Busyのみ採用
+- ESP32がBusy/状態不明なら本体旋回を計画しても動作しない
+- SAFE/MANUAL/ESTOP、ロスト時、頭部コマンドを拒否
+- AUTO + 新鮮な検出 + 角度範囲でHEAD_POSE_SETを許可
+- 偽UART/Memory sinkでSTATUS照会、HEAD角度、TRACK左右、STOPをソフトウェア検証
+
+### テスト中の修正
+
+- 最初のCIは132件中1件失敗。テストデータに先頭空白があり、コード側の空白除去で正しく受理されるため、実際の不正データとして`ZZ[HeadState]...`を用いるテストに訂正し、**132件全合格**
+
+### 保留
+
+- 実Pi/ESP32の現行ファームウェア確認と配線・電源安全確認
+- ESP32からの通信断ウォッチドッグ（ESP32単体で通信断をSTOPする機能は未実装）
+- STOPのESP32受信ACKの信頼性、頭部サーボの実際の動き・方向
+- 実機制御のランチャー、有効化UI、手動認証経路の確認
+- 展示用フル走行テスト
+
+**注意：Phase 5の合格はソフトウェアのみ。実機サーボへは送信していない。**
