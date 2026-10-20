@@ -1,46 +1,29 @@
 # PC GPU person-detection experiment
 
-Production V8.8.3を変更せず、Raspberry PiのUSBカメラ映像をPCへ送り、PC GPUで人物を検出する実験です。
+Production V8.8.3を変更せず、Pi USBカメラ映像をPC/GPUへ送り、人物検出とBBox座標変換を行う開発用モジュール。
 
-## 構成
+構成: USB Camera → Raspberry Pi → JPEG/TCP → PC GPU → DetectionResult/JSON → Raspberry Pi
 
-```text
-USB Camera -> Raspberry Pi -> JPEG/TCP -> PC GPU(YOLO26) -> DetectionResult/JSON -> Raspberry Pi
-```
+## 実装一覧
+- pc_detector_server.py: YOLOによる人物検出
+- person_tracker.py: 位置/サイズの連続性ガード（本人識別ではない）
+- pi_stream_client.py: Pi→PC映像送信と結果受信
+- person_target_adapter.py: PersonBBoxから頭部付近のAimと誤差を計算
+- pi_tracking_dry_run.py: 座標とSafetyManager状態を表示（ESP32にはアクセスしない）
+- safety_manager.py: SAFE / AUTO / MANUAL / ESTOP論理状態とコマンド許可制御
+- check_pc_environment.py: PC/GPU環境チェック
 
-現段階では**ロボットへコマンドを送りません**。まず End-to-End latency と人物検出安定性を測定します。
+接続手順は SETUP_WINDOWS_PI.md を参照。
 
-- **Windows PCとPiの具体的なセットアップ:** [SETUP_WINDOWS_PI.md](SETUP_WINDOWS_PI.md)
-- **PCのGPU環境診断:** `python experiments/pc_gpu/check_pc_environment.py`
-- **通信回帰テスト:** `python -m unittest discover -s experiments/pc_gpu/tests -v`
+## テスト実行方針（10/20更新）
+- **ソフトウェア単体テストとGitHub CIは、アシスタントが実行して結果を記録する。**
+- **Pi/ESP32の実機検証はユーザーが再開を指示するまで延期する。**
+- 詳細: ../../docs/TEST_PLAN_2026-10-20.md
+- 既存実測: ../../docs/TEST_RESULTS_2026-10-19.md
 
-## PC側起動
-
-```powershell
-.\.venv\Scripts\python.exe experiments/pc_gpu/pc_detector_server.py --device 0
-```
-
-NVIDIA CUDAが使用できなければ、CPUでの確認に限り `--device cpu` を指定します。`yolo26n.pt` の初回取得にはネット接続が必要な場合があります。
-
-## Pi側起動
-
-```bash
-python3 experiments/pc_gpu/pi_stream_client.py --host <PCのIPv4アドレス>
-```
-
-Piの負荷が高ければ `--width 320 --height 240 --jpeg-quality 60` も試してください。
-
-## 最初の測定項目
-
-- Personが正面・横向き・歩行中に継続検出されること
-- `infer=...ms` と `rtt=...ms` の値
-- 人物がいない場合 `found=False`
-- PC停止・LAN切断時にクライアントがタイムアウトすること
-
-## 初期合格目安（仮）
-
-- 推論時間：50ms未満
-- End-to-End RTT：120ms未満
-- 展示距離で人物ロストがHaarより少ないこと
-
-数値は実機測定で調整します。**これらは実測結果ではありません。**
+## 安全上の制約
+- SafetyManagerは動作コマンドを論理的に拒否するだけであり、ESP32へSTOPを送らない。
+- ESP32側の独立watchdog、非常停止、認証されたMANUAL操作経路は今後実装する。
+- 既存ESP32の前後パルスはSTOPが届いてもそのパルス終了後の停止となる。
+- 初期状態で前後移動はallow_translation=Falseとし、実機校正まで無効。
+- この段階でのソフトウェアテスト合格は、実機安全性を保証しない。

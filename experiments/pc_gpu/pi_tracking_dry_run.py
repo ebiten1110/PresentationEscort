@@ -14,6 +14,7 @@ import cv2
 from detection_protocol import DetectionResult, recv_json, send_message
 from person_target_adapter import detection_to_person_target
 from pi_stream_client import encode_frame
+from safety_manager import SafetyManager
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +35,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     print("[Safety] DRY RUN ONLY - no ESP32 commands will be sent.")
+    safety = SafetyManager()
     camera = cv2.VideoCapture(args.camera_index)
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
@@ -58,9 +60,11 @@ def main() -> None:
                 rtt_ms = (time.monotonic() - started) * 1000.0
 
                 if rtt_ms > args.max_rtt_ms:
+                    safety.observe_detection(False, rtt_ms)
                     print(f"[Safety] STALE rtt={rtt_ms:.1f}ms; target discarded")
                     continue
                 if result.error:
+                    safety.connection_lost()
                     print(f"[Safety] Detector error: {result.error}")
                     continue
 
@@ -69,8 +73,13 @@ def main() -> None:
                     confidence_min=args.minimum_confidence,
                     aim_height_fraction=args.aim_height,
                 )
+                safety.observe_detection(target is not None, rtt_ms)
+                status = safety.status()
                 if target is None:
-                    print(f"[Target] NO_PERSON rtt={rtt_ms:.1f}ms")
+                    print(
+                        f"[Target] NO_PERSON rtt={rtt_ms:.1f}ms "
+                        f"mode={status.mode.value} reason={status.reason}"
+                    )
                     continue
 
                 residual = target.residual_bearing_deg()
@@ -80,13 +89,16 @@ def main() -> None:
                     f"error=({target.error_x:+d},{target.error_y:+d})px "
                     f"residual={residual:+.1f}deg "
                     f"confidence={target.confidence:.2f} "
-                    f"infer={result.inference_ms:.1f}ms rtt={rtt_ms:.1f}ms"
+                    f"infer={result.inference_ms:.1f}ms rtt={rtt_ms:.1f}ms "
+                    f"mode={status.mode.value} auto_ready={status.auto_ready}"
                 )
     except KeyboardInterrupt:
         print("\n[Main] interrupted")
     except (ConnectionError, TimeoutError, socket.timeout, OSError) as exc:
+        safety.connection_lost()
         print(f"[Safety] PC connection unavailable: {exc}")
     finally:
+        safety.connection_lost()
         camera.release()
         print("[Safety] DRY RUN stopped; motors were never enabled.")
 
