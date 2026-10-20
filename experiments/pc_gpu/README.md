@@ -53,3 +53,13 @@ python3 experiments/pc_gpu/pi_safe_stop_probe.py --enable-serial --port /dev/tty
 - 停止コマンドはシリアルwriteが受け付けられたことまでしか検査できず、ESP32側の受理ACKはまだない。
 - **自律モーションを有効にするエントリーポイントはまだ作っていない。** モーター稼働前にhead/body二重ループの統合と検証が必要。
 - MANUALはAI推論リンクが途絶えても動作可能とする設計だが、将来UIには認証と別経路の操作デッドマンが必要。
+
+## Phase 4: V8.8.3相当の二重ループ接続（Dry-runのみ）
+
+- `v883_person_dual_loop.py`: V8.8.3の頭部Yaw/Pitch、画像座標系、物理確認済み本体旋回方向・しきい値を移植したプランナー。
+- `pi_tracking_dry_run.py`: PC/GPU→Pi人物座標→V8.8.3相当のHead/Body計画まで算出する。**実機角度の読み戻しが未接続なので本体旋回は常にBLOCKED**。
+- `tests/test_v883_person_dual_loop.py`: オフラインで左右符号、画角による誤差、角度制限、確認フレーム、Busy interlock、フィードバック要件を検証。
+- `tests/test_remote_loop_integration.py`: 模擬YOLO検出→頭部/体プランナー→PiMotionGateway（メモリシンク）の結合検証。
+- 設計上の制約: [../../docs/PHASE4_V883_REMOTE_CONTROL_ADAPTER.md](../../docs/PHASE4_V883_REMOTE_CONTROL_ADAPTER.md)
+
+実機には命令を出さない。元V8.8.3の起動スクリプトは変更していない。
