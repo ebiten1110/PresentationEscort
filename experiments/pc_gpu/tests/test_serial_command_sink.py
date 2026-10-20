@@ -123,6 +123,11 @@ class SerialCommandTests(unittest.TestCase):
             b"SAFETY_DISARM\n", b"SAFETY_ESTOP\n", b"SAFETY_RESET\n",
         ])
 
+    def test_firmware_version_query_is_read_only(self):
+        sink, uart = self.make()
+        sink.send("SAFETY_VERSION")
+        self.assertEqual(uart.writes[-1], b"SAFETY_VERSION\n")
+
     def test_requires_port(self):
         with self.assertRaises(ValueError):
             SerialCommandSink("", serial_factory=FakeUart)

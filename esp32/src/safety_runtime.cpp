@@ -92,6 +92,12 @@ bool handleSafetyProtocolCommand(const String& command) {
         printSafetyStatus();
         return true;
     }
+    if (command == "SAFETY_VERSION") {
+        // Explicit compatibility probe — available without ARM or motion.
+        Serial.println("[Safety] Protocol=V1 TimeoutMs=750");
+        printSafetyStatus();
+        return true;
+    }
     if (command == "SAFETY_STATUS") {
         printSafetyStatus();
         return true;

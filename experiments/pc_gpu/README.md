@@ -99,3 +99,14 @@ python3 experiments/pc_gpu/pi_safe_stop_probe.py --enable-serial --port /dev/tty
 - APIテスト: `tests/test_operator_console.py` をGitHub CIで実施。実機UIの表示・タッチ操作は後日
 
 Phase 7設計: [../../docs/PHASE7_OPERATOR_CONSOLE.md](../../docs/PHASE7_OPERATOR_CONSOLE.md)
+
+
+## Phase 8: 配備前点検（実機モーター出力は引き続き無効）
+
+- デフォルトはデバイスを一切使わない静的整合性監査：python3 experiments/pc_gpu/pi_deployment_launcher.py
+- コンソール起動：python3 experiments/pc_gpu/pi_deployment_launcher.py --stage console
+- PiのWebカメラ→PC検出を接続：上記に --pc-host <PC IPv4> を追加（実機サーボは無関係）
+- ESP32のファームウェア診断はサーボ電源OFF、実機検証再開後に限り使用：--stage diagnostic --serial-port <ESP32シリアル> --servo-power-off-confirmed
+- SAFETY_VERSIONの返信は V1 / TimeoutMs=750 と DISARMED の両方がそろった場合のみ互換と判定する
+- **走行や頭部を動かす起動モードはまだ作らない**。Arduino/C++のwatchdogテスト成功と実機停止安全性を混同しない
+- 詳細：docs/PHASE8_DEPLOYMENT_PRECHECK.md

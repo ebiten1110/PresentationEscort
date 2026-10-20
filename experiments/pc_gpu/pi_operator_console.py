@@ -305,13 +305,13 @@ class OperatorHandler(BaseHTTPRequestHandler):
         return self.json(200 if result["ok"] else 409, result)
 
 
-def main() -> None:
+def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="LOCAL DRY-RUN console; no ESP32 hardware")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--pc-host", default=None, help="Enable Pi USB camera -> GPU PC dry-run")
     parser.add_argument("--pc-port", type=int, default=8765)
     parser.add_argument("--camera-index", type=int, default=0)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     token = secrets.token_urlsafe(32)
     runtime = OperatorRuntime()
