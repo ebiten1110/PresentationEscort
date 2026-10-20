@@ -6,6 +6,7 @@ may reset the board and trigger its startup servo-centering code.
 from __future__ import annotations
 
 import re
+import sys
 import threading
 from typing import Callable, Optional
 
@@ -43,10 +44,12 @@ class SerialCommandSink:
 
         self.port = port
         self._lock = threading.Lock()
-        self._serial = serial_factory(
-            port=port, baudrate=baudrate, timeout=0.1,
-            write_timeout=write_timeout_s,
-        )
+        options = dict(port=port, baudrate=baudrate, timeout=0.1,
+                       write_timeout=write_timeout_s)
+        # Linux/Pi: reject a second process opening the same ESP32 UART.
+        if sys.platform.startswith("linux"):
+            options["exclusive"] = True
+        self._serial = serial_factory(**options)
 
     def send(self, command: str) -> None:
         normalized = command.strip().upper()
