@@ -209,3 +209,15 @@ Phase10運用手順: `docs/PHASE10_RELEASE_READINESS.md`
 - 既存のV8.8.3原本、ESP32実機ファームウェア、Phase10重要ファイルは未変更
 - PC/GPU実機でのV2人物候補送信確認、Pi3A+実機性能、サーボ停止、複数人展示環境での本人識別は未実施
 - **人物BBox追跡は顔認証/ReIDではない**。交差・同位置の入れ替わりでの誤追従の可能性が残るため、実機P10はNO-GOのまま
+
+## Phase 12 — 当日オフライン安全リハーサル・実機準備レポート（2026-10-20）
+
+- 実装コミット: `55f18fcb741fe8798d0d544be7120e3c687e4f4f`
+- GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39370912495
+- Python構文検査・ソフトウェア単体/統合テスト **287/287 合格、失敗0**（Phase11の274件＋新規13件）。
+- 新規: `phase12_rehearsal.py` — Gitソース・安全コードの照合、VirtualEsp32 STOP/ARM/750ms watchdog、手動発表者ロックと交差・消失、ハードウェアチェック表をまとめて検査。
+- `phase12_rehearsal.py --output-dir ~/PresentationEscort-reports` はJSON＋SHA-256チェックサムを新しいファイル名で保存。ESP32シリアル、GPU、カメラ、モーターへのアクセスなし。
+- `motor_activation_permitted` は常にfalse。レポート内の `offline_rehearsal_passed` はソフトウェア模擬のみ。未保全の実ESP32フラッシュ、物理緊急停止、現場人物切替、5分展示テストは検証外。
+- `--backup-dir` を与えない場合は VERIFIED_OFF_DEVICE_SOURCE_BACKUP_MISSING、現場P01～P12未検証なら PHYSICAL_TESTS_NOT_VERIFIED として記録。
+- 現場向けの実行順序、移行禁止条件、モードA:ソフトウェア／モードB:静的展示／モードC:実機の切替判断を `docs/PHASE12_SHOW_DAY_RUNBOOK.md` に記載。
+- **ユーザー所有Pi/実ESP32への書込、ソースの実バックアップ作成、実機運転はしていない。実機GO/NO-GOは依然NO-GO。**
