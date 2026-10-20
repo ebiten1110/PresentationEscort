@@ -48,3 +48,15 @@ USBシリアルはPiだけが書き込める信頼済みローカル接続前提
 - 実機配備ランチャー、認証済みAUTO/MANUAL UI、実機への書き込みと配線照合
 - ESP32からの確実なモーション受理ACK（今は既存Walkingログを使用）
 - 実機の距離・上下制御の再キャリブレーション
+
+### 明示的な異常解除 API
+
+- PiMotionGateway.request_firmware_reset() はESTOP状態のときのみSAFETY_RESETを要求する。
+- ESP32から新しい State: DISARMED を受信するまでは PiMotionGateway.reset_emergency_stop() はPi側のESTOPを解除しない。
+- 解除後はSAFEに戻るだけ。追従開始は改めて明示ARMが必要。
+
+### ソフトウェア実行結果
+
+- C++ネイティブテストとPlatformIOファームウェアビルドが成功（GitHub Actions 39352815051）。
+- Python150件のテストと構文確認が成功（GitHub Actions 39353199423）。
+- 実機停止挙動は未検証。
