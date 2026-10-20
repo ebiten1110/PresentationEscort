@@ -5,6 +5,8 @@
   let currentMode = "SAFE";
   let manualTimer = null;
   let holding = null;
+  let lastLockState = "UNLOCKED";
+  let currentCandidatesKey = "";
   const byId = id => document.getElementById(id);
   const controls = ["auto", "manual", "stop", "left", "right", "estop", "reset"];
   const fmt = val => (val === null || val === undefined) ? "—" : String(val);
@@ -42,6 +44,53 @@
     }
   }
 
+  async function targetAction(payload) {
+    try {
+      const data = await call("/api/target", payload);
+      byId("lock-message").textContent = data.ok
+        ? "候補を選択しました。次の映像で再確認します。"
+        : data.error;
+      await refresh();
+    } catch (err) {
+      byId("lock-message").textContent = "選択できません: " + err.message;
+    }
+  }
+
+  function updateCandidates(status) {
+    const area = byId("candidates");
+    const candidates = Array.isArray(status.candidates) ? status.candidates : [];
+    const lockName = status.lock_state || "UNAVAILABLE";
+    const key = JSON.stringify([
+      status.frame_seq, lockName, status.mode, candidates,
+    ]);
+    if (key === currentCandidatesKey) return;
+    currentCandidatesKey = key;
+    area.replaceChildren();
+    byId("lock-state").textContent = lockName;
+    byId("release-target").disabled =
+      !status.presenter_selected || status.mode !== "SAFE";
+    if (!candidates.length) {
+      const empty = document.createElement("span");
+      empty.textContent = "人物候補なし／PCが旧版の可能性があります";
+      area.appendChild(empty);
+      return;
+    }
+    for (const candidate of candidates) {
+      const button = document.createElement("button");
+      button.textContent =
+        "候補 " + (candidate.index + 1) +
+        "（左右 " + candidate.x_percent + "% / 上下 " +
+        candidate.y_percent + "% / 信頼度 " +
+        Math.round(candidate.confidence * 100) + "%）";
+      button.disabled = status.mode !== "SAFE" ||
+        !!status.presenter_selected || lockName === "NO_FRESH_FRAME";
+      button.addEventListener("click", () => {
+        targetAction({index: candidate.index, frame_seq: status.frame_seq});
+      });
+      area.appendChild(button);
+    }
+  }
+
   async function refresh() {
     if (!connection) return;
     try {
@@ -62,6 +111,7 @@
       byId("estop").disabled = false;
       byId("reset").disabled = status.mode !== "ESTOP";
       ["left", "right"].forEach(id => byId(id).disabled = status.mode !== "MANUAL");
+      updateCandidates(status);
       byId("auth-message").textContent = "認証済み｜DRY RUN";
     } catch (err) {
       byId("auth-message").textContent = "更新に失敗: " + err.message;
@@ -108,6 +158,7 @@
   ["auto","manual","stop","estop","reset"].forEach(name => {
     byId(name).addEventListener("click", () => { releaseHold(); act(name); });
   });
+  byId("release-target").addEventListener("click", () => targetAction({release: true}));
   byId("connect").addEventListener("click", async () => {
     const supplied = byId("token").value.trim();
     if (!supplied) return;

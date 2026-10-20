@@ -31,15 +31,18 @@ class PersonDetector:
         self.model = YOLO(config.model)
         self.last_finish_time: Optional[float] = None
         self.tracker = PersonTracker(min_confidence=config.confidence)
+        self.frame_seq = 0
         print("[Model] ready")
 
     def reset_tracking(self) -> None:
         """Clear person-lock state on every new Pi connection."""
         self.tracker.reset()
         self.last_finish_time = None
+        self.frame_seq = 0
 
     def detect(self, frame: np.ndarray) -> DetectionResult:
         frame_height, frame_width = frame.shape[:2]
+        self.frame_seq += 1
         started = time.perf_counter()
         results = self.model.predict(
             source=frame,
@@ -78,8 +81,22 @@ class PersonDetector:
                         )
                     )
 
+        # Protocol V2 transfers every valid person candidate. The Pi makes
+        # the final operator-confirmed association; confidence MUST NOT
+        # select or silently re-acquire a presenter.
+        people = [
+            {
+                "x1": box.x1, "y1": box.y1, "x2": box.x2, "y2": box.y2,
+                "confidence": box.confidence,
+            }
+            for box in candidates
+            if box.valid(frame_width, frame_height, self.config.confidence)
+        ]
         selected = self.tracker.select(candidates, frame_width, frame_height)
         common = dict(
+            protocol_version=2,
+            frame_seq=self.frame_seq,
+            people=people,
             frame_width=frame_width,
             frame_height=frame_height,
             inference_ms=inference_ms,

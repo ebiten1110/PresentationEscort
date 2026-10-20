@@ -132,3 +132,14 @@ Phase 7設計: [../../docs/PHASE7_OPERATOR_CONSOLE.md](../../docs/PHASE7_OPERATO
 - Git履歴とソースのバックアップは**現在ESP32に焼かれているファームウェアを保存しない**
 - 既存本番Pi V8.8.3、実ESP32、GitHub mainは変更せず、motor出力は初期OFFのまま
 - 手順とGO/NO-GO条件: [../../docs/PHASE10_RELEASE_READINESS.md](../../docs/PHASE10_RELEASE_READINESS.md)
+
+## Phase 11: 発表者ロック（人の明示選択・模擬ESP32のみ）
+
+- `pc_detector_server.py`が新V2 protocolでYOLO検出の人物候補すべてを送信（PCもPiも開発版へ更新）
+- `pi_presenter_lock_demo.py`は実機シリアルを使わず、VirtualEsp32だけに追従指令を送信
+- 起動例: `python3 experiments/pc_gpu/pi_presenter_lock_demo.py --pc-host 10.17.6.97`
+- ブラウザの**発表者ロック**で現物の位置に合う候補を手動選択。位置は左右・上下％で表示される。人の本人認証ではない。
+- 大きな移動・混雑・交差・フレーム欠落・ロスト・通信断はAUTOを止め、次の追従には再選択と明示ARMが必要
+- **V1サーバーや旧版の単一人物結果では安全なAUTOに進めない**
+- Phase10の不変ソフトウェアベースラインはそのまま。実機複数人AUTOは引き続きNO-GO。
+- 設計・制限: [../../docs/PHASE11_PRESENTER_LOCK.md](../../docs/PHASE11_PRESENTER_LOCK.md)

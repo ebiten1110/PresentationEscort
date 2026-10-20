@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import socket
 import struct
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict
 
 _HEADER = struct.Struct("!I")
@@ -26,6 +26,11 @@ class DetectionResult:
     server_fps: float = 0.0
     source: str = "pc_gpu"
     error: str = ""
+    # V2: list of ALL PERSON boxes, not just confidence's best match.
+    # V1 callers remain compatible but cannot authorize presenter-locked AUTO.
+    protocol_version: int = 1
+    frame_seq: int = 0
+    people: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -277,7 +277,7 @@ class OperatorHandler(BaseHTTPRequestHandler):
         if not self.authenticated():
             return self.json(401, {"error": "UNAUTHORIZED"})
         path = urlsplit(self.path).path
-        if path not in ("/api/action", "/api/manual"):
+        if path not in ("/api/action", "/api/manual", "/api/target"):
             return self.json(404, {"error": "NOT_FOUND"})
         if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
             return self.json(415, {"error": "JSON_ONLY"})
@@ -292,7 +292,17 @@ class OperatorHandler(BaseHTTPRequestHandler):
             obj = json.loads(self.rfile.read(size))
         except (ValueError, UnicodeDecodeError):
             return self.json(400, {"error": "INVALID_JSON"})
-        if not isinstance(obj, dict) or len(obj) != 1:
+        if not isinstance(obj, dict):
+            return self.json(400, {"error": "INVALID_REQUEST"})
+        if path == "/api/target":
+            if not (set(obj) == {"index", "frame_seq"} or obj == {"release": True}):
+                return self.json(400, {"error": "INVALID_TARGET_REQUEST"})
+            handler = getattr(self.server.runtime, "target_action", None)
+            if not callable(handler):
+                return self.json(409, {"error": "PRESENTER_LOCK_NOT_AVAILABLE"})
+            result = handler(obj)
+            return self.json(200 if result["ok"] else 409, result)
+        if len(obj) != 1:
             return self.json(400, {"error": "INVALID_REQUEST"})
         if path == "/api/action":
             if not isinstance(obj.get("action"), str):

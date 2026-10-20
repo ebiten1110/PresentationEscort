@@ -35,6 +35,15 @@
     </section>
 
     <section class="panel">
+      <h2>発表者ロック（模擬環境）</h2>
+      <p class="hint">周囲の実際の人物を目視で確認し、画面上の位置に合う候補を選択。発表者本人の識別ではありません。交差・消失したら再選択が必要です。</p>
+      <p>状態：<strong id="lock-state">未接続</strong></p>
+      <div id="candidates" class="direction" aria-live="polite"></div>
+      <button id="release-target" class="outline" disabled>ロックを解除</button>
+      <p id="lock-message" class="hint" aria-live="polite"></p>
+    </section>
+
+    <section class="panel">
       <h2>モード切り替え</h2>
       <div class="actions">
         <button id="auto" disabled>AUTOに切り替え</button>
