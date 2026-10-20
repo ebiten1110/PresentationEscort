@@ -194,3 +194,18 @@ Raspberry Pi 3 A+の現在環境、ESP32の実際の書込版、サーボの配�
 - 実機運動の解禁・PiやESP32への書込・本番バイナリの指定・GitHub mainへの統合は行っていない。
 
 Phase10運用手順: `docs/PHASE10_RELEASE_READINESS.md`
+
+## Phase 11 — 発表者の明示選択／複数人物の誤切替ガード（2026-10-20）
+
+- 対象コードcommit: `0f3c396827d64b40752afc094afe321ac8d63481`
+- GitHub Actions: https://github.com/ebiten1110/PresentationEscort/actions/runs/39361152391
+- **Python全274テスト成功（以前の242件＋新規32件）**、compileall成功
+- V2プロトコル：YOLOの全PERSON候補と連番を返し、Pi側の安全ロックが追従対象を選択
+- オペレーターの明示選択がない状態ではAUTOを許可しない
+- 人物位置の大きな飛び、別人との近接/複数候補、対象消失、frame seqリプレイ/欠落、V1検出サーバー、通信再接続でロックを失効させる
+- 他人の信頼度が上がっても勝手に発表者を選び直さない
+- 対象ロスト時はVirtualESP32にSTOP要求。再開には新しい手動ロックとAUTOの明示再ARMが必要
+- 認証付きローカルWeb API `/api/target` と候補位置％の表示を実装
+- 既存のV8.8.3原本、ESP32実機ファームウェア、Phase10重要ファイルは未変更
+- PC/GPU実機でのV2人物候補送信確認、Pi3A+実機性能、サーボ停止、複数人展示環境での本人識別は未実施
+- **人物BBox追跡は顔認証/ReIDではない**。交差・同位置の入れ替わりでの誤追従の可能性が残るため、実機P10はNO-GOのまま
