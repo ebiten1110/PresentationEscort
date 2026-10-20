@@ -40,7 +40,8 @@ class GatewayTests(unittest.TestCase):
         self.prime(g)
         result = g.request_motion("TRACK_LEFT", source="AUTO", now=10.2)
         self.assertFalse(result.approved)
-        self.assertEqual(sink.commands, [])
+        # Failed authorization sends an explicit STOP as a defensive command.
+        self.assertEqual(sink.commands, ["STOP"])
 
     def test_explicit_arm_allows_turn(self):
         g, sink = self.make()
@@ -83,7 +84,8 @@ class GatewayTests(unittest.TestCase):
         g.arm_auto(now=10.15)
         r = g.request_motion("TRACK_FORWARD", source="AUTO", now=10.16)
         self.assertFalse(r.approved)
-        self.assertEqual(sink.commands, [])
+        # Even a forbidden forward request is answered by STOP, never movement.
+        self.assertEqual(sink.commands, ["STOP"])
 
     def test_send_failure_latches_transport_fault(self):
         g, sink = self.make(sink=FailingSink())
@@ -105,6 +107,23 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(g.arm_manual(now=10.0))
         self.assertTrue(g.request_motion("TRACK_LEFT", source="MANUAL", now=10.1).approved)
         self.assertEqual(sink.commands, ["TRACK_LEFT"])
+
+    def test_mode_switch_stops_previous_motion(self):
+        g, sink = self.make()
+        self.prime(g)
+        self.assertTrue(g.arm_auto(now=10.15))
+        self.assertTrue(g.request_motion("TRACK_LEFT", source="AUTO", now=10.16).approved)
+        self.assertTrue(g.arm_manual(now=10.17))
+        self.assertEqual(sink.commands, ["TRACK_LEFT", "STOP"])
+        self.assertEqual(g.status(now=10.17).safety.mode, Mode.MANUAL)
+
+    def test_manual_can_survive_detector_disconnect(self):
+        g, sink = self.make()
+        self.assertTrue(g.arm_manual(now=10.0))
+        self.assertTrue(g.request_motion("TRACK_RIGHT", source="MANUAL", now=10.1).approved)
+        g.connection_lost()
+        self.assertEqual(g.status(now=10.11).safety.mode, Mode.MANUAL)
+        self.assertEqual(sink.commands, ["TRACK_RIGHT"])
 
     def test_manual_deadman_stops(self):
         g, sink = self.make()
