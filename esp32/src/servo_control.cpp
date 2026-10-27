@@ -74,9 +74,14 @@ void initServoControl() {
 
   delay(10);
 
-  centerAllServos();
+  // POWER-UP POLICY: never issue neutral-position PWM on boot.
+  // Servo mechanics may not be at the nominal zero pose; energizing a
+  // previously commanded center can cause an unexpected full-body jump.
+  // Clear ALL PWM outputs while the independent servo V+ stays OFF.
+  // This is a startup precaution, NOT a substitute for a physical E-stop.
+  stopAllServos();
 
-  Serial.println("[Servo] Initialized.");
+  Serial.println("[Servo] Initialized with PWM outputs OFF (no auto-center).");
 }
 
 
