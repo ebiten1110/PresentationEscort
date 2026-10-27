@@ -150,7 +150,7 @@ class CameraInferenceWorker(threading.Thread):
         *,
         port: int = 8765,
         camera_index: int = 0,
-        timeout_s: float = 2.0,
+        timeout_s: float = 30.0,  # First CUDA inference can exceed 10s; Pi safety tick runs independently.
     ) -> None:
         super().__init__(name="camera-inference-dry-run", daemon=True)
         self.runtime = runtime
