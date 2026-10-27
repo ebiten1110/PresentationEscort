@@ -185,8 +185,9 @@ void initHeadControl() {
   currentPitchAngle = STAND_ANGLE_HEAD_PITCH;
   targetPitchAngle = STAND_ANGLE_HEAD_PITCH;
 
-  setHeadYaw(currentYawAngle);
-  setHeadPitch(currentPitchAngle);
+  // Keep the software neutral target, but DO NOT energize head PWM here.
+  // The servo-control layer clears the PCA9685 outputs at boot.  Physical
+  // pose must be verified independently before any deliberate motion test.
 
   lastHeadUpdateTime = millis();
   lastStatusTime = millis();
