@@ -40,10 +40,10 @@ class RealPowerOnTests(unittest.TestCase):
         self.patch_serial.start()
         self.addCleanup(self.patch_serial.stop)
 
-    def launch(self, *, head_enabled=True, body_enabled=False, max_turns=2):
+    def launch(self, *, head_enabled=True, body_enabled=False):
         r = LockedRealRuntime(
             "mock-ch340", head_enabled=head_enabled,
-            body_enabled=body_enabled, max_body_turns=max_turns,
+            body_enabled=body_enabled,
             power_declared="ON_OPERATOR_DECLARED",
         )
         self.addCleanup(r.close)
@@ -98,25 +98,22 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertIn("STOP", self.uart.commands)
         self.assertFalse(r.action("auto")["ok"])
 
-    def test_body_turns_never_automatic_and_no_translation(self):
-        r = self.launch(body_enabled=True, max_turns=1)
-        self.assertEqual(r.status()["actuation_scope"], "HEAD_YAW_3DEG_AND_BOUNDED_BODY_TURNS")
+    def test_repeated_body_turns_no_count_cap(self):
+        r = self.launch(body_enabled=True)
+        self.assertEqual(r.status()["actuation_scope"], "HEAD_YAW_3DEG_AND_FEEDBACK_GATED_BODY_TURNS")
         self.assertNotIn("SAFETY_ARM", self.uart.commands)
         self.select(r)
         self.assertTrue(r.action("auto")["ok"])
         until(lambda: r.status()["mode"] == "AUTO")
-        for seq in range(6, 40):
+        for seq in range(6, 100):
             r.process_detection(frame(seq), 65.)
             time.sleep(.04)
-            if r.status()["remaining_body_turns"] == 0:
+            if len([c for c in self.uart.commands if c in ("TRACK_LEFT", "TRACK_RIGHT")]) >= 3:
                 break
         turns = [c for c in self.uart.commands if c in ("TRACK_LEFT", "TRACK_RIGHT")]
-        self.assertEqual(len(turns), 1)
-        self.assertEqual(r.status()["remaining_body_turns"], 0)
+        self.assertGreaterEqual(len(turns), 3)
         self.assertNotIn("TRACK_FORWARD", self.uart.commands)
         self.assertNotIn("TRACK_BACKWARD", self.uart.commands)
-        with self.assertRaises(ValueError):
-            r.sink.send("TRACK_RIGHT")
 
     def test_serial_disconnect_forces_estop(self):
         r = self.launch()
@@ -150,9 +147,8 @@ class PlannerTests(unittest.TestCase):
                 self.assertLessEqual(abs(float(match[1])), 3.0)
                 self.assertEqual(float(match[2]), 0.0)
 
-    def test_body_planner_budget_requires_feedback(self):
-        sent_turns = [0]
-        p = HeadBodyTurnPlanner(max_turns=1, sent_turns=lambda: sent_turns[0])
+    def test_body_planner_requires_feedback_not_quota(self):
+        p = HeadBodyTurnPlanner()
         target = detection_to_person_target(DetectionResult(
             found=True, center_x=270, center_y=110, width=70,
             height=160, confidence=.88, class_id=0, class_name="person",
@@ -166,11 +162,7 @@ class PlannerTests(unittest.TestCase):
         b = p.step(target, now=10.2, head_yaw_feedback_deg=0.,
                    head_feedback_fresh=True, body_idle=True)
         self.assertTrue(any(x.body_command in ("TRACK_LEFT", "TRACK_RIGHT") for x in (a,b)))
-        # Merely proposing while SAFE must not consume the real UART budget.
-        self.assertEqual(p.remaining_turns, 1)
-        sent_turns[0] = 1
-        self.assertEqual(p.remaining_turns, 0)
-        self.assertTrue(abs(p.yaw_target_deg) <= 3.0)
+        self.assertLessEqual(abs(p.yaw_target_deg), 3.0)
         self.assertEqual(p.pitch_target_deg, 0.0)
 
 
