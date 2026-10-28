@@ -197,6 +197,10 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 status["auto_ready"] and self.head_enabled
                 and presenter["presenter_selected"]
                 and presenter["lock_state"] == "TRACKING"
+                and status["mode"] == Mode.SAFE.value
+                and status["fw_safety"] == "DISARMED"
+                and not self.gateway.firmware_arm_pending("AUTO")
+                and not status["transport_fault"]
             )
             return status
 
@@ -206,6 +210,21 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 return {"ok": False, "error": "BODY_MOVEMENT_NOT_APPROVED"}
             if action in {"auto", "reset"} and not self.head_enabled:
                 return {"ok": False, "error": "SERIAL_PROBE_ONLY"}
+            if action == "auto":
+                state = self.gateway.status().safety.mode
+                fw_state = self.gateway.firmware_safety_status()
+                if state == Mode.ESTOP:
+                    return {"ok": False, "error": "ESTOP_LATCHED_RESET_REQUIRED"}
+                if state == Mode.AUTO:
+                    # CRITICAL: duplicate SAFETY_ARM while already ARMED is
+                    # rejected by firmware and can lead to ESTOP. Idempotent.
+                    return {"ok": True, "already_active": True}
+                if self.gateway.firmware_arm_pending("AUTO"):
+                    # Repeated UI clicks during the async handshake must not
+                    # send another SAFETY_ARM or reset the deadline.
+                    return {"ok": True, "pending": True}
+                if state != Mode.SAFE or fw_state != "DISARMED":
+                    return {"ok": False, "error": "ESP32_NOT_DISARMED_OR_NOT_READY"}
             response = super().action(action)
             if action == "auto" and response.get("pending"):
                 self._arm_wait_since = time.monotonic()
