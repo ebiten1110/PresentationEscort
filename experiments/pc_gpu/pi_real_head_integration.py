@@ -80,6 +80,7 @@ class HeadOnlySerialSink:
         self.body_enabled = body_enabled
         self._serial_partial = ""
         self.last_safety_event: Optional[str] = None
+        self.last_servo_diagnostic: Optional[str] = None
 
     def send(self, command: str) -> None:
         cmd = command.strip().upper()
@@ -112,6 +113,8 @@ class HeadOnlySerialSink:
                 line = line.strip()
                 # Store ESP32's actual diagnostic line, not a guess inferred
                 # from presenter detection or an old ARM-success message.
+                if line.startswith("[ServoDiag]"):
+                    self.last_servo_diagnostic = line[:180]
                 if line.startswith("[Safety] FAULT=") or line in (
                     "[Safety] ARM_REJECTED",
                     "[Safety] RESET_REJECTED",
@@ -207,6 +210,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status["simulation"] = False
             status["uart_poll_error"] = self._uart_poll_error
             status["uart_last_safety_event"] = self.sink.last_safety_event
+            status["uart_last_servo_diagnostic"] = self.sink.last_servo_diagnostic
             status["arm_error"] = self._last_arm_error
             status["fault_cause"] = (
                 "UART_POLL_" + self._uart_poll_error if self._uart_poll_error else
