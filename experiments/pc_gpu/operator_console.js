@@ -125,6 +125,31 @@
       byId("event").textContent = fmt(status.message);
       byId("ready").textContent = status.auto_ready ? "可能" : "未準備（対象または通信未成立）";
       byId("lock-reason").textContent = fmt(status.lock_reason);
+      const head = status.esp32_head_feedback;
+      const walking = status.esp32_walking_feedback;
+      const follow = status.follow_debug;
+      byId("esp32-head-feedback").textContent = head
+        ? (head.fresh ? "Yaw " + fmt(head.yaw_deg) + "° / Pitch " +
+           fmt(head.pitch_deg) + "°（ESP32内部値）" : "テレメトリ未受信・期限切れ")
+        : "未対応";
+      byId("esp32-walking-feedback").textContent = walking
+        ? fmt(walking.state) + " / Busy " + fmt(walking.busy) +
+          " / IDLE確定 " + fmt(walking.idle_confirmed)
+        : "未対応";
+      byId("follow-debug").textContent = follow
+        ? fmt(follow.reason) + " / 首送信 " + fmt(follow.head_sent) +
+          " / 本体送信 " + fmt(follow.body_sent) +
+          " / 方位 " + fmt(follow.bearing_deg) + "°"
+        : "人物ロック後のデータ待ち";
+      byId("motion-diagnosis").textContent =
+        status.simulation !== false ? "仮想ESP32" :
+        status.mode !== "AUTO" ? "AUTOではありません" :
+        !head || !head.fresh ? "ESP32の首角度応答を取得できていません" :
+        head.yaw_deg != null && Math.abs(head.yaw_deg) >= 0.5
+          ? "ESP32内部角度は更新済み。実サーボの電源・配線・PCA9685出力を確認"
+          : follow && !follow.head_sent
+            ? "追従判断で首命令が未送信。理由欄を確認"
+            : "首の目標値／ESP32内部角度の更新待ち";
       const fault = status.uart_poll_error
         ? "UART_POLL_" + status.uart_poll_error
         : status.fault_cause || status.arm_error || null;
