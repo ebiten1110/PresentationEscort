@@ -13,7 +13,7 @@
     <header>
       <p class="eyebrow">PRESENTATION ESCORT / LOCAL OPERATOR</p>
       <h1>ロボット操作コンソール</h1>
-      <p class="subtitle">デモ画面｜モーター出力は無効｜SSH経由のローカル接続専用</p>
+      <p id="runtime-subtitle" class="subtitle">ローカル接続の操作画面｜実機/模擬を接続後に判定します</p>
     </header>
 
     <section class="panel auth">
@@ -31,11 +31,11 @@
       <div class="stat"><span>人物検出</span><strong id="person">未接続</strong></div>
       <div class="stat"><span>往復遅延</span><strong id="rtt">—</strong></div>
       <div class="stat"><span>ESP32</span><strong id="fw">模擬のみ</strong></div>
-      <div class="stat"><span>モーター</span><strong>OFF（固定）</strong></div>
+      <div class="stat"><span>モーター制御範囲</span><strong id="motor">未確認</strong></div>
     </section>
 
     <section class="panel">
-      <h2>発表者ロック（模擬環境）</h2>
+      <h2>発表者ロック</h2>
       <p class="hint">周囲の実際の人物を目視で確認し、画面上の位置に合う候補を選択。発表者本人の識別ではありません。交差・消失したら再選択が必要です。</p>
       <p>状態：<strong id="lock-state">未接続</strong></p>
       <div id="candidates" class="direction" aria-live="polite"></div>
@@ -66,7 +66,7 @@
       <h2>緊急停止</h2>
       <button id="estop" class="emergency" disabled>緊急停止（ESTOP）</button>
       <button id="reset" class="outline" disabled>停止状態を解除（SAFEへ）</button>
-      <p class="hint">解除後も自動運転は再開されません。この画面は模擬操作のみです。</p>
+      <p class="hint">解除後も自動運転は再開されません。STOP/ESTOPはサーボ外部電源を物理的には遮断しません。</p>
     </section>
 
     <section class="panel">
@@ -79,7 +79,7 @@
       </dl>
       <p id="feedback" role="status" aria-live="polite"></p>
     </section>
-    <footer>Phase 7 · Dry-run control console · Physical safety is not verified</footer>
+    <footer>Operator console · 操作許可と物理的な安全性の保証は別です · 実機電源はソフトで検出できません</footer>
   </main>
 </body>
 </html>
