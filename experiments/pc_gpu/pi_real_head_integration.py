@@ -1,9 +1,9 @@
 """Controlled Pi camera -> PC YOLO -> presenter lock -> REAL ESP32 bridge.
 
-Default: UART telemetry probe only with servo V+ physically OFF. No ARM.
-Explicit supervised mode: ONLY head YAW <=3 deg (pitch stays zero), NO body.
-No automatic forward/back, no uncalibrated head operation, no public HTTP.
-This is a guarded development bridge, NOT approval for show-floor operation.
+Default: read-only UART monitor (servo power may be ON; no software ARM).
+Opt-in, supervised: head yaw <=3 degrees around verified neutral, pitch zero.
+No body turns/translation; no automatic ARM on startup or re-connection.
+Power/physical ESTOP status is operator-declared, not measured by software.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import argparse
 import math
 import re
 import secrets
-import threading
+import time
 from dataclasses import replace
 from typing import Optional
 
@@ -28,13 +28,28 @@ _POSE = re.compile(r"^HEAD_POSE_SET:([-+]?\d+(?:\.\d+)?),([-+]?\d+(?:\.\d+)?)$")
 
 
 class HeadOnlyPlanner(V883PersonDualLoop):
+    """Limit the planner's INTERNAL state, not only its returned proposal."""
+
     def step(self, *args, **kwargs):
+        # The V8.8 planner proposes full-range body motions. Never retain
+        # or forward these proposals to the head-only real actuator mode.
         plan = super().step(*args, **kwargs)
-        # Remove every body command and keep the head's initial travel tiny.
+        self.yaw_target_deg = max(-3.0, min(3.0, self.yaw_target_deg))
+        self.pitch_target_deg = 0.0
+        self.body_candidate = None
+        self.body_candidate_count = 0
+        self.motion_pending = False
+        if plan.head_pose_command is not None:
+            self.last_sent_yaw = self.yaw_target_deg
+            self.last_sent_pitch = 0.0
+            head_command = f"HEAD_POSE_SET:{self.yaw_target_deg:.1f},0.0"
+        else:
+            head_command = None
         return replace(
             plan, body_command=None, suggested_body_turn=None,
-            yaw_target_deg=max(-3.0, min(3.0, plan.yaw_target_deg)),
+            yaw_target_deg=self.yaw_target_deg,
             pitch_target_deg=0.0,
+            head_pose_command=head_command,
         )
 
 
@@ -75,7 +90,7 @@ class HeadOnlySerialSink:
 class LockedRealRuntime(LockedSimulationRuntime):
     """Reuse real V2 presenter-lock logic and safety gateway without a virtual MCU."""
 
-    def __init__(self, serial_port: str, *, head_enabled: bool = False) -> None:
+    def __init__(self, serial_port: str, *, head_enabled: bool = False, power_declared: str = "UNKNOWN") -> None:
         super().__init__()
         # Superclass has not started any threads or issued any commands.
         self.sink.close()
@@ -87,18 +102,25 @@ class LockedRealRuntime(LockedSimulationRuntime):
         )
         self._feedback = Esp32FeedbackPoller(self.sink, self.controller)
         self.head_enabled = head_enabled
+        self.power_declared = power_declared
         self._last_event = "REAL_UART_READY_HEAD_DISABLED" if not head_enabled else "REAL_HEAD_TEST_READY"
 
     def status(self) -> dict:
         with self._guard:
             # Bypass IntegratedSimulationRuntime.status(): avoid misleading VIRTUAL UI.
             status = OperatorRuntime.status(self)
-            presenter = self.presenter.display(now=__import__("time").monotonic())
+            presenter = self.presenter.display(now=time.monotonic())
             status.update(presenter)
             status["simulation"] = False
             status["simulated_esp32"] = False
             status["head_only_test"] = self.head_enabled
             status["body_motion_permitted"] = False
+            status["actuation_scope"] = "HEAD_YAW_ONLY_3DEG" if self.head_enabled else "MONITOR_ONLY"
+            status["servo_power_declared"] = self.power_declared
+            status["motor_status"] = (
+                "ON申告・首Yaw制限試験" if self.head_enabled
+                else "モーター指令無効（通電状態は未測定）"
+            )
             status["auto_ready"] = bool(
                 status["auto_ready"] and self.head_enabled
                 and presenter["presenter_selected"]
@@ -129,13 +151,19 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--pc-port", type=int, default=8765)
     ap.add_argument("--camera-index", type=int, default=0)
     ap.add_argument("--port", type=int, default=8766)
-    ap.add_argument("--servo-power-off-confirmed", action="store_true", required=True)
+    power_group = ap.add_mutually_exclusive_group(required=True)
+    power_group.add_argument("--servo-power-on", action="store_true",
+                             help="Servo V+ is ON (operator declaration, NOT telemetry)")
+    power_group.add_argument("--servo-power-off-confirmed", action="store_true",
+                             help="Legacy monitor-only path; servo V+ physically OFF")
     ap.add_argument("--enable-head-test", action="store_true",
                     help="Only under secured/calibrated bench test; max yaw +/-3deg")
     ap.add_argument("--bench-secured", action="store_true")
     ap.add_argument("--neutral-calibrated", action="store_true")
     ap.add_argument("--physical-cutoff-tested", action="store_true")
     args = ap.parse_args(argv)
+    if args.enable_head_test and not args.servo_power_on:
+        ap.error("Head motor test requires explicitly declared servo V+ ON")
     if args.enable_head_test and not (
         args.bench_secured and args.neutral_calibrated
         and args.physical_cutoff_tested
@@ -148,7 +176,11 @@ def main(argv: Optional[list[str]] = None) -> None:
     if not args.serial_port.startswith("/dev/serial/by-id/"):
         ap.error("Use stable Pi /dev/serial/by-id/... device, not guessed ttyUSB")
 
-    runtime = LockedRealRuntime(args.serial_port, head_enabled=args.enable_head_test)
+    runtime = LockedRealRuntime(
+        args.serial_port,
+        head_enabled=args.enable_head_test,
+        power_declared="ON_OPERATOR_DECLARED" if args.servo_power_on else "OFF_OPERATOR_DECLARED",
+    )
     worker = None
     server = None
     try:
@@ -163,6 +195,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         server = OperatorServer(("127.0.0.1", args.port), runtime, token)
         print("REAL ESP32 UART. BODY MOTION BLOCKED. Real servo is NOT approved by software.")
         print("Mode:", "SUPERVISED YAW +/-3deg" if args.enable_head_test else "SERIAL PROBE; NO ARM")
+        print("Servo V+:", runtime.power_declared, "(operator-declared, not electrically sensed)")
+        print("STOP/ESTOP do not remove power; keep physical cutoff accessible.")
         print(f"Operator URL: http://127.0.0.1:{args.port}/")
         print("Operator token:", token)
         server.serve_forever(poll_interval=0.2)
