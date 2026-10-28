@@ -214,8 +214,8 @@ class RealPowerOnTests(unittest.TestCase):
     def test_operator_status_exposes_esp32_internal_feedback_not_physical_sensor(self):
         r = self.launch()
         r.controller.telemetry.feed(
-            b"[HeadState] currentYaw=-3.0 targetYaw=-3.0 currentPitch=0.0 targetPitch=0.0 moving=NO\\n"
-            b"Walking State: IDLE\\nBusy: NO\\n",
+            b"[HeadState] currentYaw=-3.0 targetYaw=-3.0 currentPitch=0.0 targetPitch=0.0 moving=NO\n"
+            b"Walking State: IDLE\nBusy: NO\n",
         )
         state = r.status()
         self.assertTrue(state["esp32_head_feedback"]["fresh"])
@@ -228,8 +228,8 @@ class RealPowerOnTests(unittest.TestCase):
         self.addCleanup(sink.close)
         from unittest.mock import patch as mock_patch
         with mock_patch.object(sink._inner, "read_available", side_effect=[
-            b"[ServoDiag] PCA9685_I2C=ACK address=0x40\\n",
-            b"[ServoDiag] PWM ch=2 angle=-3.0 duty=309 i2c=NO_ACK\\n",
+            b"[ServoDiag] PCA9685_I2C=ACK address=0x40\n",
+            b"[ServoDiag] PWM ch=2 angle=-3.0 duty=309 i2c=NO_ACK\n",
         ]):
             sink.read_available()
             sink.read_available()
