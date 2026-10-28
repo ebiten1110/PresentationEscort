@@ -4,6 +4,7 @@
   let connection = false;
   let currentMode = "SAFE";
   let pendingAuto = false;
+  let autoSession = false;
   let manualTimer = null;
   let holding = null;
   let lastLockState = "UNLOCKED";
@@ -37,8 +38,14 @@
     try {
       const res = await call("/api/action", {action});
       pendingAuto = action === "auto" && !!res.pending;
-      byId("feedback").textContent = res.pending
-        ? action.toUpperCase() + "：ESP32の応答待ち"
+      if (action === "auto" && res.ok) autoSession = true;
+      if (action === "stop" || action === "estop" || action === "reset") {
+        pendingAuto = false;
+        autoSession = false;
+      }
+      byId("feedback").textContent = res.already_active
+        ? "AUTO：すでに追従中（ESP32には再ARMしません）"
+        : res.pending ? action.toUpperCase() + "：ESP32の応答待ち"
         : res.ok ? action.toUpperCase() + " 実行" : res.error;
       await refresh();
     } catch (err) {
@@ -126,19 +133,24 @@
         ? "ARM受付応答を待機中"
         : status.mode === "AUTO" ? "ARM成立／AUTO"
         : status.arm_error || (status.mode === "ESTOP" ? "ESTOP／ARM不可" : "待機／未ARM");
-      if (pendingAuto) {
-        if (status.mode === "AUTO") {
-          byId("feedback").textContent = "AUTO：ESP32 ARM成立・追従中";
-          pendingAuto = false;
-        } else if (status.mode === "ESTOP") {
-          byId("feedback").textContent = "AUTO中断：" + (fault || "緊急停止");
-          pendingAuto = false;
-        } else if (status.arm_error || !status.fw_arm_pending) {
-          byId("feedback").textContent = "AUTO未成立：" + (status.arm_error || status.reason);
-          pendingAuto = false;
-        }
+      if (status.mode === "AUTO" && autoSession) {
+        byId("feedback").textContent = "AUTO：ESP32 ARM成立・追従中";
+        pendingAuto = false;
+      } else if (status.mode === "ESTOP" && (pendingAuto || autoSession)) {
+        byId("feedback").textContent = "AUTO中断：" + (fault || status.stop_reason || "緊急停止");
+        pendingAuto = false;
+        autoSession = false;
+      } else if (status.mode === "SAFE" && autoSession && !status.fw_arm_pending) {
+        byId("feedback").textContent = "AUTO停止：" + (status.arm_error || status.reason);
+        pendingAuto = false;
+        autoSession = false;
+      } else if (pendingAuto && status.arm_error) {
+        byId("feedback").textContent = "AUTO未成立：" + status.arm_error;
+        pendingAuto = false;
+        autoSession = false;
       }
-      byId("auto").disabled = !status.auto_ready || status.mode === "ESTOP";
+      byId("auto").disabled = !status.auto_ready ||
+        status.mode !== "SAFE" || !!status.fw_arm_pending || pendingAuto;
       byId("manual").disabled = status.mode === "ESTOP" || !simulated;
       byId("stop").disabled = false;
       byId("estop").disabled = false;
