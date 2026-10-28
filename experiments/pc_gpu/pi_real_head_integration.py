@@ -130,6 +130,38 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self.body_enabled = body_enabled
         self.power_declared = power_declared
         self._last_event = "REAL_UART_READY_HEAD_DISABLED" if not head_enabled else "REAL_HEAD_TEST_READY"
+        self._uart_poll_error: Optional[str] = None
+        self._arm_wait_since: Optional[float] = None
+        self._last_arm_error: Optional[str] = None
+
+    def _poll_loop(self) -> None:
+        """Real UART reader: persist errors beyond the next presenter event."""
+        while not self._exit.wait(0.025):
+            try:
+                with self._guard:
+                    self._feedback.poll()
+                    if self._reset_requested:
+                        self.gateway.reset_emergency_stop()
+                        if self.gateway.status().safety.mode == Mode.SAFE:
+                            self._reset_requested = False
+                            self._last_event = "REAL_ESTOP_RESET_TO_SAFE"
+                    if self._arm_wait_since is not None:
+                        state = self.gateway.status().safety.mode
+                        if state == Mode.AUTO:
+                            self._arm_wait_since = None
+                            self._last_arm_error = None
+                        elif not self.gateway.firmware_arm_pending("AUTO"):
+                            self._last_arm_error = (
+                                "AUTO_ARM_NOT_COMPLETED_BEFORE_ESTOP" if state == Mode.ESTOP
+                                else "AUTO_ARM_NOT_ACKNOWLEDGED_OR_CANCELED"
+                            )
+                            self._arm_wait_since = None
+            except Exception as exc:
+                with self._guard:
+                    self._uart_poll_error = type(exc).__name__
+                    self.gateway.emergency_stop()
+                    self._last_event = "REAL_UART_POLL_ERROR_" + type(exc).__name__
+                return
 
     def status(self) -> dict:
         with self._guard:
@@ -138,6 +170,14 @@ class LockedRealRuntime(LockedSimulationRuntime):
             presenter = self.presenter.display(now=time.monotonic())
             status.update(presenter)
             status["simulation"] = False
+            status["uart_poll_error"] = self._uart_poll_error
+            status["arm_error"] = self._last_arm_error
+            status["fault_cause"] = (
+                "UART_POLL_" + self._uart_poll_error if self._uart_poll_error else
+                "ESP32_REPORTED_LATCHED" if status["fw_safety"] == "LATCHED" else
+                "SERIAL_TRANSPORT_FAULT" if status["transport_fault"] else
+                "ESTOP_SOURCE_UNKNOWN" if status["mode"] == "ESTOP" else None
+            )
             status["simulated_esp32"] = False
             status["head_only_test"] = self.head_enabled and not self.body_enabled
             status["body_motion_permitted"] = self.body_enabled
@@ -166,7 +206,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 return {"ok": False, "error": "BODY_MOVEMENT_NOT_APPROVED"}
             if action in {"auto", "reset"} and not self.head_enabled:
                 return {"ok": False, "error": "SERIAL_PROBE_ONLY"}
-            return super().action(action)
+            response = super().action(action)
+            if action == "auto" and response.get("pending"):
+                self._arm_wait_since = time.monotonic()
+                self._last_arm_error = None
+            return response
 
     def manual(self, direction: str) -> dict:
         if direction == "stop":
