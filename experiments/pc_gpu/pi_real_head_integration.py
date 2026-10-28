@@ -2,7 +2,8 @@
 
 Default: read-only UART monitor (servo power may be ON; no software ARM).
 Opt-in, supervised: head yaw <=3 degrees around verified neutral, pitch zero.
-No body turns/translation; no automatic ARM on startup or re-connection.
+Body tracking turns require separate opt-in, bounded pulse count and calibration.
+No translation or automatic ARM on startup/re-connection.
 Power/physical ESTOP status is operator-declared, not measured by software.
 """
 from __future__ import annotations
@@ -53,18 +54,60 @@ class HeadOnlyPlanner(V883PersonDualLoop):
         )
 
 
+class HeadBodyTurnPlanner(V883PersonDualLoop):
+    """Opt-in head + limited V8.8 body-turn pulse plans, never translation."""
+
+    def __init__(self, *, max_turns: int = 2) -> None:
+        super().__init__()
+        if not 1 <= max_turns <= 3:
+            raise ValueError("max_turns must be 1..3")
+        self.remaining_turns = max_turns
+
+    def step(self, *args, **kwargs):
+        plan = super().step(*args, **kwargs)
+        self.yaw_target_deg = max(-3.0, min(3.0, self.yaw_target_deg))
+        self.pitch_target_deg = 0.0
+        if plan.head_pose_command is not None:
+            self.last_sent_yaw = self.yaw_target_deg
+            self.last_sent_pitch = 0.0
+            head_command = f"HEAD_POSE_SET:{self.yaw_target_deg:.1f},0.0"
+        else:
+            head_command = None
+        body_command = plan.body_command
+        if body_command is not None:
+            if self.remaining_turns <= 0:
+                # Do not re-arm the body budget until the app is restarted.
+                self.motion_pending = False
+                body_command = None
+            else:
+                self.remaining_turns -= 1
+        return replace(plan,
+            yaw_target_deg=self.yaw_target_deg,
+            pitch_target_deg=0.0,
+            head_pose_command=head_command,
+            body_command=body_command,
+            suggested_body_turn=plan.suggested_body_turn if self.remaining_turns else None,
+        )
+
+
 class HeadOnlySerialSink:
     requires_watchdog = True
     requires_firmware_safety = True
 
-    def __init__(self, port: str, *, head_enabled: bool):
+    def __init__(self, port: str, *, head_enabled: bool,
+                 body_enabled: bool = False, max_body_turns: int = 2):
         self._inner = SerialCommandSink(port)
         self.head_enabled = head_enabled
+        self.body_enabled = body_enabled
+        self.max_body_turns = max_body_turns
+        self.body_turns_sent = 0
 
     def send(self, command: str) -> None:
         cmd = command.strip().upper()
         if cmd.startswith("TRACK_") or cmd in {"LEFT", "RIGHT", "FORWARD", "BACKWARD", "STAND"}:
-            raise ValueError("body and translation commands are physically disabled")
+            if not (self.body_enabled and cmd in {"TRACK_LEFT", "TRACK_RIGHT"}
+                    and self.body_turns_sent < self.max_body_turns):
+                raise ValueError("body command outside allowed bounded-turn budget")
         pose = _POSE.fullmatch(cmd)
         if pose is not None:
             yaw, pitch = float(pose[1]), float(pose[2])
@@ -79,6 +122,8 @@ class HeadOnlySerialSink:
         elif cmd == "SAFETY_ARM" and not self.head_enabled:
             raise ValueError("ARM is forbidden in UART probe mode")
         self._inner.send(cmd)
+        if cmd in {"TRACK_LEFT", "TRACK_RIGHT"}:
+            self.body_turns_sent += 1
 
     def read_available(self, *, max_bytes: int = 2048) -> bytes:
         return self._inner.read_available(max_bytes=max_bytes)
@@ -90,18 +135,30 @@ class HeadOnlySerialSink:
 class LockedRealRuntime(LockedSimulationRuntime):
     """Reuse real V2 presenter-lock logic and safety gateway without a virtual MCU."""
 
-    def __init__(self, serial_port: str, *, head_enabled: bool = False, power_declared: str = "UNKNOWN") -> None:
+    def __init__(self, serial_port: str, *, head_enabled: bool = False,
+                 power_declared: str = "UNKNOWN", body_enabled: bool = False,
+                 max_body_turns: int = 2) -> None:
+        if body_enabled and not head_enabled:
+            raise ValueError("body turns require head control opt-in")
+        if not 1 <= max_body_turns <= 3:
+            raise ValueError("max_body_turns must be 1..3")
         super().__init__()
         # Superclass has not started any threads or issued any commands.
         self.sink.close()
-        self.sink = HeadOnlySerialSink(serial_port, head_enabled=head_enabled)
+        self.sink = HeadOnlySerialSink(
+            serial_port, head_enabled=head_enabled, body_enabled=body_enabled,
+            max_body_turns=max_body_turns)
         self.gateway = PiMotionGateway(self.sink)
         self.controller = RemotePersonController(
-            self.gateway, planner=HeadOnlyPlanner(),
+            self.gateway,
+            planner=(HeadBodyTurnPlanner(max_turns=max_body_turns)
+                     if body_enabled else HeadOnlyPlanner()),
             enable_actuation=head_enabled,
         )
         self._feedback = Esp32FeedbackPoller(self.sink, self.controller)
         self.head_enabled = head_enabled
+        self.body_enabled = body_enabled
+        self.max_body_turns = max_body_turns
         self.power_declared = power_declared
         self._last_event = "REAL_UART_READY_HEAD_DISABLED" if not head_enabled else "REAL_HEAD_TEST_READY"
 
@@ -114,12 +171,20 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status["simulation"] = False
             status["simulated_esp32"] = False
             status["head_only_test"] = self.head_enabled
-            status["body_motion_permitted"] = False
-            status["actuation_scope"] = "HEAD_YAW_ONLY_3DEG" if self.head_enabled else "MONITOR_ONLY"
+            status["body_motion_permitted"] = self.body_enabled
+            status["remaining_body_turns"] = (
+                self.controller.planner.remaining_turns if self.body_enabled else 0)
+            status["actuation_scope"] = (
+                "HEAD_YAW_3DEG_AND_BOUNDED_BODY_TURNS" if self.body_enabled
+                else "HEAD_YAW_ONLY_3DEG" if self.head_enabled
+                else "MONITOR_ONLY"
+            )
             status["servo_power_declared"] = self.power_declared
             status["motor_status"] = (
-                "ON申告・首Yaw制限試験" if self.head_enabled
-                else "モーター指令無効（通電状態は未測定）"
+                f"ON申告・首Yaw±3°/体幹旋回 残{status['remaining_body_turns']}回"
+                if self.body_enabled else
+                "ON申告・首Yaw±3°のみ" if self.head_enabled else
+                "モーター指令無効（通電状態は未測定）"
             )
             status["auto_ready"] = bool(
                 status["auto_ready"] and self.head_enabled
@@ -158,10 +223,20 @@ def main(argv: Optional[list[str]] = None) -> None:
                              help="Legacy monitor-only path; servo V+ physically OFF")
     ap.add_argument("--enable-head-test", action="store_true",
                     help="Only under secured/calibrated bench test; max yaw +/-3deg")
+    ap.add_argument("--enable-body-turns", action="store_true",
+                    help="Explicit lab-only body turn, at most 1..3 pulses")
+    ap.add_argument("--body-turn-calibrated", action="store_true")
+    ap.add_argument("--max-body-turns", type=int, default=2)
     ap.add_argument("--bench-secured", action="store_true")
     ap.add_argument("--neutral-calibrated", action="store_true")
     ap.add_argument("--physical-cutoff-tested", action="store_true")
     args = ap.parse_args(argv)
+    if args.enable_body_turns and not args.enable_head_test:
+        ap.error("Body turns require --enable-head-test")
+    if args.enable_body_turns and not args.body_turn_calibrated:
+        ap.error("Body turns require verified body-turn calibration")
+    if not 1 <= args.max_body_turns <= 3:
+        ap.error("--max-body-turns must be 1..3")
     if args.enable_head_test and not args.servo_power_on:
         ap.error("Head motor test requires explicitly declared servo V+ ON")
     if args.enable_head_test and not (
@@ -179,6 +254,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     runtime = LockedRealRuntime(
         args.serial_port,
         head_enabled=args.enable_head_test,
+        body_enabled=args.enable_body_turns,
+        max_body_turns=args.max_body_turns,
         power_declared="ON_OPERATOR_DECLARED" if args.servo_power_on else "OFF_OPERATOR_DECLARED",
     )
     worker = None
@@ -193,8 +270,13 @@ def main(argv: Optional[list[str]] = None) -> None:
             worker.start()
         token = secrets.token_urlsafe(32)
         server = OperatorServer(("127.0.0.1", args.port), runtime, token)
-        print("REAL ESP32 UART. BODY MOTION BLOCKED. Real servo is NOT approved by software.")
-        print("Mode:", "SUPERVISED YAW +/-3deg" if args.enable_head_test else "SERIAL PROBE; NO ARM")
+        print("REAL ESP32 UART. Real servo is NOT physically verified by software.")
+        print("Mode:", (
+            f"SUPERVISED YAW +/-3deg AND BODY TURNS max={args.max_body_turns}"
+            if args.enable_body_turns else
+            "SUPERVISED YAW +/-3deg" if args.enable_head_test else
+            "SERIAL PROBE; NO ARM"
+        ))
         print("Servo V+:", runtime.power_declared, "(operator-declared, not electrically sensed)")
         print("STOP/ESTOP do not remove power; keep physical cutoff accessible.")
         print(f"Operator URL: http://127.0.0.1:{args.port}/")
