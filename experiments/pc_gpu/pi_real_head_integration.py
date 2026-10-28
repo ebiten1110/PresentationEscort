@@ -170,7 +170,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status.update(presenter)
             status["simulation"] = False
             status["simulated_esp32"] = False
-            status["head_only_test"] = self.head_enabled
+            status["head_only_test"] = self.head_enabled and not self.body_enabled
             status["body_motion_permitted"] = self.body_enabled
             status["remaining_body_turns"] = (
                 self.controller.planner.remaining_turns if self.body_enabled else 0)
