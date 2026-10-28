@@ -167,7 +167,7 @@ class RealPowerOnTests(unittest.TestCase):
         from unittest.mock import patch as mock_patch
         with mock_patch.object(r.sink._inner, "read_available", side_effect=[
             b"[Safety] FAULT=HEARTBEAT_",
-            b"TIMEOUT\\n[Safety] State: LATCHED\\n",
+            b"TIMEOUT\n[Safety] State: LATCHED\n",
         ]):
             r.sink.read_available()
             r.sink.read_available()
