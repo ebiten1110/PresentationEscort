@@ -353,9 +353,9 @@ class PiMotionGateway:
                 self._stop_locked("HEAD_SEND_FAILED", force=True)
                 return ControlDecision(False, "STOP", "HEAD_SEND_FAILED", Mode.ESTOP)
 
-    def emergency_stop(self) -> None:
+    def emergency_stop(self, *, cause: str = "OPERATOR_ESTOP") -> None:
         with self._lock:
-            self._fault_cause = "OPERATOR_ESTOP"
+            self._fault_cause = cause
             self.safety.emergency_stop()
             if self._firmware_safety is not None:
                 try:
