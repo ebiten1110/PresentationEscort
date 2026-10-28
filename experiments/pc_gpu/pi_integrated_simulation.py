@@ -41,6 +41,7 @@ class IntegratedSimulationRuntime(OperatorRuntime):
         self._last_rtt_ms = None
         self._last_inference_ms = None
         self._last_event = "VIRTUAL_ESP32_OFFLINE"
+        self._uart_poll_error: Optional[str] = None
         self._started = False
         self._exit = threading.Event()
         self._feedback_thread: Optional[threading.Thread] = None
@@ -68,10 +69,11 @@ class IntegratedSimulationRuntime(OperatorRuntime):
                         if self.gateway.status().safety.mode == Mode.SAFE:
                             self._reset_requested = False
                             self._last_event = "VIRTUAL_ESTOP_RESET_TO_SAFE"
-            except Exception:
+            except Exception as exc:
                 with self._guard:
-                    self.gateway.emergency_stop()
-                    self._last_event = "VIRTUAL_UART_ERROR"
+                    self._uart_poll_error = type(exc).__name__
+                    self.gateway.emergency_stop(cause="UART_POLL_" + type(exc).__name__)
+                    self._last_event = "UART_POLL_FAILED_" + type(exc).__name__
                 return
 
     def action(self, action: str) -> dict:
