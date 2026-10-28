@@ -24,8 +24,6 @@ class GatewayStatus:
     transport_fault: bool
     stop_reason: str
     motion_pending: bool
-    fault_cause: Optional[str] = None
-    arm_error: Optional[str] = None
 
 
 class MemoryCommandSink:
@@ -69,8 +67,6 @@ class PiMotionGateway:
         self._head_active = False
         self._last_command = "NONE"
         self._stop_reason = "STARTUP"
-        self._fault_cause: Optional[str] = None
-        self._arm_error: Optional[str] = None
         self._closed = False
 
     def _stop_locked(self, reason: str, *, force: bool = False) -> None:
@@ -87,7 +83,6 @@ class PiMotionGateway:
         except Exception:
             self._transport_fault = True
             self._last_command = "STOP_DELIVERY_FAILED"
-            self._fault_cause = "STOP_DELIVERY_FAILED"
             self.safety.emergency_stop()
 
     def _tick_locked(self, now: Optional[float] = None) -> None:
@@ -100,23 +95,19 @@ class PiMotionGateway:
             and self.safety.mode in (Mode.AUTO, Mode.MANUAL)
             and not fw.fresh_armed(current)
         ):
-            self._fault_cause = "FIRMWARE_SAFETY_TIMEOUT"
             self.safety.emergency_stop()
             self._stop_locked("FIRMWARE_SAFETY_TIMEOUT", force=True)
         self.safety.tick(now=current)
         if fw is not None:
             if fw.pending_expired(current):
-                self._arm_error = "FIRMWARE_ARM_ACK_TIMEOUT"
                 fw.note_stop()
                 try:
                     self.sink.send("SAFETY_DISARM")
                 except Exception:
                     self._transport_fault = True
-                    self._fault_cause = "DISARM_WRITE_FAILED"
                     self.safety.emergency_stop()
             if self.safety.mode in (Mode.AUTO, Mode.MANUAL):
                 if not fw.fresh_armed(current):
-                    self._fault_cause = "FIRMWARE_SAFETY_TIMEOUT"
                     self.safety.emergency_stop()
                     self._stop_locked("FIRMWARE_SAFETY_TIMEOUT", force=True)
                 else:
@@ -124,7 +115,6 @@ class PiMotionGateway:
                         fw.send_ping_if_due(now=current)
                     except Exception:
                         self._transport_fault = True
-                        self._fault_cause = "SAFETY_PING_FAILED"
                         self.safety.emergency_stop()
                         self._stop_locked("SAFETY_PING_FAILED", force=True)
         if self.safety.mode not in (Mode.AUTO, Mode.MANUAL):
@@ -149,8 +139,6 @@ class PiMotionGateway:
             transport_fault=self._transport_fault,
             stop_reason=self._stop_reason,
             motion_pending=self._motion_pending,
-            fault_cause=self._fault_cause,
-            arm_error=self._arm_error,
         )
 
     def status(self, now: Optional[float] = None) -> GatewayStatus:
@@ -179,7 +167,6 @@ class PiMotionGateway:
                     self._tick_locked()
             except Exception:
                 with self._lock:
-                    self._fault_cause = "WATCHDOG_INTERNAL_ERROR"
                     self.safety.emergency_stop()
                     self._stop_locked("WATCHDOG_INTERNAL_ERROR", force=True)
 
@@ -205,17 +192,13 @@ class PiMotionGateway:
             current = self.safety._now(now)
             requested = fw.feed(raw, now=current)
             if fw.state == "LATCHED":
-                if self.safety.mode != Mode.ESTOP:
-                    self._fault_cause = "ESP32_REPORTED_LATCHED"
                 self.safety.emergency_stop()
                 self._stop_locked("ESP32_LATCHED", force=True)
                 return
             if requested == "AUTO":
-                self._arm_error = None
                 if not self.safety.arm_auto(now=current):
                     self._stop_locked("AUTO_ARM_REJECTED", force=True)
             elif requested == "MANUAL":
-                self._arm_error = None
                 if not self.safety.arm_manual(now=current):
                     self._stop_locked("MANUAL_ARM_REJECTED", force=True)
 
@@ -246,12 +229,9 @@ class PiMotionGateway:
                 try:
                     # First explicit call begins the ESP32 handshake.
                     # AUTO becomes active only upon a subsequent ARM_ACCEPTED.
-                    initiated = self._firmware_safety.request_arm("AUTO", now=current)
-                    if initiated:
-                        self._arm_error = None
+                    self._firmware_safety.request_arm("AUTO", now=current)
                 except Exception:
                     self._transport_fault = True
-                    self._fault_cause = "SAFETY_ARM_WRITE_FAILED"
                     self.safety.emergency_stop()
                     return False
                 return False
@@ -300,7 +280,6 @@ class PiMotionGateway:
             except Exception:
                 self._transport_fault = True
                 self.safety.emergency_stop()
-                self._fault_cause = "MOTION_SEND_FAILED"
                 self._stop_locked("MOTION_SEND_FAILED", force=True)
                 return ControlDecision(False, "STOP", "MOTION_SEND_FAILED", Mode.ESTOP)
 
@@ -349,13 +328,11 @@ class PiMotionGateway:
             except Exception:
                 self._transport_fault = True
                 self.safety.emergency_stop()
-                self._fault_cause = "HEAD_SEND_FAILED"
                 self._stop_locked("HEAD_SEND_FAILED", force=True)
                 return ControlDecision(False, "STOP", "HEAD_SEND_FAILED", Mode.ESTOP)
 
-    def emergency_stop(self, *, cause: str = "OPERATOR_ESTOP") -> None:
+    def emergency_stop(self) -> None:
         with self._lock:
-            self._fault_cause = cause
             self.safety.emergency_stop()
             if self._firmware_safety is not None:
                 try:
@@ -397,9 +374,6 @@ class PiMotionGateway:
                 if not 0 <= current - fw.state_at <= fw.ack_ttl_s:
                     return
             self.safety.reset_emergency_stop()
-            if self.safety.mode == Mode.SAFE:
-                self._fault_cause = None
-                self._arm_error = None
 
     def close(self) -> None:
         with self._lock:
