@@ -56,6 +56,7 @@ class RealPowerOnTests(unittest.TestCase):
         for i in range(2, 6):
             r.process_detection(frame(i), 65.)
         self.assertEqual(r.status()["lock_state"], "TRACKING")
+        until(lambda: r.status()["fw_safety"] == "DISARMED")
 
     def test_power_on_does_not_arm_without_operator(self):
         r = self.launch()
@@ -158,6 +159,20 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertFalse(state["fw_arm_pending"])
         self.assertIsNone(state["arm_error"])
         self.assertEqual(state["fw_safety"], "ARMED")
+
+    def test_uart_reports_real_safety_fault_line(self):
+        r = self.launch()
+        # The real-UART wrapper must parse \n-separated actual firmware
+        # responses, including on partial serial reads.
+        from unittest.mock import patch as mock_patch
+        with mock_patch.object(r.sink._inner, "read_available", side_effect=[
+            b"[Safety] FAULT=HEARTBEAT_",
+            b"TIMEOUT\\n[Safety] State: LATCHED\\n",
+        ]):
+            r.sink.read_available()
+            r.sink.read_available()
+        self.assertEqual(r.sink.last_safety_event,
+                         "[Safety] FAULT=HEARTBEAT_TIMEOUT")
 
     def test_second_auto_while_running_is_idempotent(self):
         r = self.launch(body_enabled=True)
