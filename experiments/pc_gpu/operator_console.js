@@ -132,6 +132,9 @@
         ? (head.fresh ? "Yaw " + fmt(head.yaw_deg) + "° / Pitch " +
            fmt(head.pitch_deg) + "°（ESP32内部値）" : "テレメトリ未受信・期限切れ")
         : "未対応";
+      byId("esp32-servo-diagnostic").textContent =
+        status.uart_last_servo_diagnostic ||
+        "未報告（診断対応ESP32ファーム未導入／首PWM未出力の可能性）";
       byId("esp32-walking-feedback").textContent = walking
         ? fmt(walking.state) + " / Busy " + fmt(walking.busy) +
           " / IDLE確定 " + fmt(walking.idle_confirmed)
