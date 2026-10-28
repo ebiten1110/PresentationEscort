@@ -64,7 +64,8 @@ class OperatorConsoleTests(unittest.TestCase):
         code, body, hdr = self.request("GET", "/")
         self.assertEqual(code, 200)
         self.assertIn(b"Presentation Escort", body)
-        self.assertIn(b"Dry-run", body)
+        self.assertIn(b'id="runtime-subtitle"', body)
+        self.assertIn(b'id="motor"', body)
         self.assertEqual(hdr["Cache-Control"], "no-store")
         self.assertIn("default-src 'none'", hdr["Content-Security-Policy"])
 
