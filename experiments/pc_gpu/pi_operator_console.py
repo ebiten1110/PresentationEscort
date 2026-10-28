@@ -54,6 +54,7 @@ class OperatorRuntime:
         self._last_rtt_ms: Optional[float] = None
         self._last_inference_ms: Optional[float] = None
         self._last_event = "READY_DRY_RUN"
+        self._last_cycle = None
         self._started = False
 
     def start(self) -> None:
@@ -97,6 +98,7 @@ class OperatorRuntime:
     def process_detection(self, detection: DetectionResult, rtt_ms: float) -> None:
         with self._guard:
             cycle = self.controller.process(detection, rtt_ms=rtt_ms)
+            self._last_cycle = cycle
             self._target_seen = cycle.target_valid
             self._last_rtt_ms = round(float(rtt_ms), 1)
             self._last_inference_ms = round(float(detection.inference_ms), 1)
