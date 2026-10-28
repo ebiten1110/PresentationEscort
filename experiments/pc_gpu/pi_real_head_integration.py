@@ -14,7 +14,7 @@ import re
 import secrets
 import time
 from dataclasses import replace
-from typing import Optional
+from typing import Callable, Optional
 
 from esp32_feedback_poller import Esp32FeedbackPoller
 from motion_gateway import PiMotionGateway
@@ -57,11 +57,18 @@ class HeadOnlyPlanner(V883PersonDualLoop):
 class HeadBodyTurnPlanner(V883PersonDualLoop):
     """Opt-in head + limited V8.8 body-turn pulse plans, never translation."""
 
-    def __init__(self, *, max_turns: int = 2) -> None:
+    def __init__(self, *, max_turns: int = 2,
+                 sent_turns: Optional[Callable[[], int]] = None) -> None:
         super().__init__()
         if not 1 <= max_turns <= 3:
             raise ValueError("max_turns must be 1..3")
-        self.remaining_turns = max_turns
+        self.max_turns = max_turns
+        # Count ONLY accepted UART writes, never unarmed proposals.
+        self._sent_turns = sent_turns if sent_turns is not None else (lambda: 0)
+
+    @property
+    def remaining_turns(self) -> int:
+        return max(0, self.max_turns - self._sent_turns())
 
     def step(self, *args, **kwargs):
         plan = super().step(*args, **kwargs)
@@ -74,13 +81,10 @@ class HeadBodyTurnPlanner(V883PersonDualLoop):
         else:
             head_command = None
         body_command = plan.body_command
-        if body_command is not None:
-            if self.remaining_turns <= 0:
-                # Do not re-arm the body budget until the app is restarted.
-                self.motion_pending = False
-                body_command = None
-            else:
-                self.remaining_turns -= 1
+        if body_command is not None and self.remaining_turns <= 0:
+            # Body turns cannot silently reset their budget on target re-lock.
+            self.motion_pending = False
+            body_command = None
         return replace(plan,
             yaw_target_deg=self.yaw_target_deg,
             pitch_target_deg=0.0,
@@ -151,7 +155,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self.gateway = PiMotionGateway(self.sink)
         self.controller = RemotePersonController(
             self.gateway,
-            planner=(HeadBodyTurnPlanner(max_turns=max_body_turns)
+            planner=(HeadBodyTurnPlanner(
+                max_turns=max_body_turns,
+                sent_turns=lambda: self.sink.body_turns_sent)
                      if body_enabled else HeadOnlyPlanner()),
             enable_actuation=head_enabled,
         )
