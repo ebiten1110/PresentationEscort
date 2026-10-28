@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pi_real_head_integration import HeadOnlyPlanner, LockedRealRuntime, main
+from pi_real_head_integration import HeadOnlyPlanner, HeadBodyTurnPlanner, HeadOnlySerialSink, LockedRealRuntime, main
 from detection_protocol import DetectionResult
 from pi_showtime_smoke import frame
 from person_target_adapter import detection_to_person_target
@@ -40,9 +40,10 @@ class RealPowerOnTests(unittest.TestCase):
         self.patch_serial.start()
         self.addCleanup(self.patch_serial.stop)
 
-    def launch(self, *, head_enabled=True):
+    def launch(self, *, head_enabled=True, body_enabled=False, max_turns=2):
         r = LockedRealRuntime(
             "mock-ch340", head_enabled=head_enabled,
+            body_enabled=body_enabled, max_body_turns=max_turns,
             power_declared="ON_OPERATOR_DECLARED",
         )
         self.addCleanup(r.close)
@@ -97,6 +98,26 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertIn("STOP", self.uart.commands)
         self.assertFalse(r.action("auto")["ok"])
 
+    def test_body_turns_never_automatic_and_no_translation(self):
+        r = self.launch(body_enabled=True, max_turns=1)
+        self.assertEqual(r.status()["actuation_scope"], "HEAD_YAW_3DEG_AND_BOUNDED_BODY_TURNS")
+        self.assertNotIn("SAFETY_ARM", self.uart.commands)
+        self.select(r)
+        self.assertTrue(r.action("auto")["ok"])
+        until(lambda: r.status()["mode"] == "AUTO")
+        for seq in range(6, 40):
+            r.process_detection(frame(seq), 65.)
+            time.sleep(.04)
+            if r.status()["remaining_body_turns"] == 0:
+                break
+        turns = [c for c in self.uart.commands if c in ("TRACK_LEFT", "TRACK_RIGHT")]
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(r.status()["remaining_body_turns"], 0)
+        self.assertNotIn("TRACK_FORWARD", self.uart.commands)
+        self.assertNotIn("TRACK_BACKWARD", self.uart.commands)
+        with self.assertRaises(ValueError):
+            r.sink.send("TRACK_RIGHT")
+
     def test_serial_disconnect_forces_estop(self):
         r = self.launch()
         self.uart.link_broken = True
@@ -129,6 +150,25 @@ class PlannerTests(unittest.TestCase):
                 self.assertLessEqual(abs(float(match[1])), 3.0)
                 self.assertEqual(float(match[2]), 0.0)
 
+    def test_body_planner_budget_requires_feedback(self):
+        p = HeadBodyTurnPlanner(max_turns=1)
+        target = detection_to_person_target(DetectionResult(
+            found=True, center_x=270, center_y=110, width=70,
+            height=160, confidence=.88, class_id=0, class_name="person",
+            frame_width=320, frame_height=240))
+        self.assertIsNotNone(target)
+        first = p.step(target, now=10.0, head_yaw_feedback_deg=None,
+                       head_feedback_fresh=False, body_idle=False)
+        self.assertIsNone(first.body_command)
+        a = p.step(target, now=10.1, head_yaw_feedback_deg=0.,
+                   head_feedback_fresh=True, body_idle=True)
+        b = p.step(target, now=10.2, head_yaw_feedback_deg=0.,
+                   head_feedback_fresh=True, body_idle=True)
+        self.assertTrue(any(x.body_command in ("TRACK_LEFT", "TRACK_RIGHT") for x in (a,b)))
+        self.assertEqual(p.remaining_turns, 0)
+        self.assertTrue(abs(p.yaw_target_deg) <= 3.0)
+        self.assertEqual(p.pitch_target_deg, 0.0)
+
 
 class CliTests(unittest.TestCase):
     def test_no_power_declaration_denied_before_uart_open(self):
@@ -143,6 +183,16 @@ class CliTests(unittest.TestCase):
                 main([
                     "--serial-port", "/dev/serial/by-id/test",
                     "--servo-power-on", "--enable-head-test"
+                ])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_body_turns_require_explicit_calibration(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                main([
+                    "--serial-port", "/dev/serial/by-id/test",
+                    "--servo-power-on", "--enable-head-test", "--enable-body-turns",
+                    "--bench-secured", "--neutral-calibrated", "--physical-cutoff-tested",
                 ])
         self.assertEqual(raised.exception.code, 2)
 
