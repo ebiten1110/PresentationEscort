@@ -185,6 +185,25 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status = OperatorRuntime.status(self)
             presenter = self.presenter.display(now=time.monotonic())
             status.update(presenter)
+            esp32 = self.controller.telemetry.snapshot(now=time.monotonic())
+            status["esp32_head_feedback"] = (
+                {"yaw_deg": esp32.head_yaw_deg, "pitch_deg": esp32.head_pitch_deg,
+                 "fresh": esp32.head_fresh}
+            )
+            status["esp32_walking_feedback"] = {
+                "state": esp32.walking_state, "busy": esp32.busy,
+                "idle_confirmed": esp32.body_idle_confirmed
+            }
+            follow = getattr(self, "_last_cycle", None)
+            status["follow_debug"] = (
+                {"reason": follow.plan.reason,
+                 "head_sent": follow.head_sent,
+                 "body_sent": follow.body_sent,
+                 "bearing_deg": round(follow.plan.body_bearing_deg, 1),
+                 "body_command": follow.plan.body_command,
+                 "yaw_target_deg": round(follow.plan.yaw_target_deg, 1)}
+                if follow is not None else None
+            )
             status["simulation"] = False
             status["uart_poll_error"] = self._uart_poll_error
             status["uart_last_safety_event"] = self.sink.last_safety_event
