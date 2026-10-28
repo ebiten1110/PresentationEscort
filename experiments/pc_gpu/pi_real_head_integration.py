@@ -2,7 +2,7 @@
 
 Default: read-only UART monitor (servo power may be ON; no software ARM).
 Opt-in, supervised: head yaw <=3 degrees around verified neutral, pitch zero.
-Body tracking turns require separate opt-in, bounded pulse count and calibration.
+Body tracking turns require separate opt-in and calibration, with no session turn-count cap.
 No translation or automatic ARM on startup/re-connection.
 Power/physical ESTOP status is operator-declared, not measured by software.
 """
@@ -14,7 +14,7 @@ import re
 import secrets
 import time
 from dataclasses import replace
-from typing import Callable, Optional
+from typing import Optional
 
 from esp32_feedback_poller import Esp32FeedbackPoller
 from motion_gateway import PiMotionGateway
@@ -87,7 +87,7 @@ class HeadOnlySerialSink:
         if cmd.startswith("TRACK_") or cmd in {"LEFT", "RIGHT", "FORWARD", "BACKWARD", "STAND"}:
             if not (self.body_enabled and cmd in {"TRACK_LEFT", "TRACK_RIGHT"}
 ):
-                raise ValueError("body command outside allowed bounded-turn budget")
+                raise ValueError("only TRACK_LEFT / TRACK_RIGHT are enabled; translation blocked")
         pose = _POSE.fullmatch(cmd)
         if pose is not None:
             yaw, pitch = float(pose[1]), float(pose[2])
