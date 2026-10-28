@@ -78,6 +78,8 @@ class HeadOnlySerialSink:
         self._inner = SerialCommandSink(port)
         self.head_enabled = head_enabled
         self.body_enabled = body_enabled
+        self._serial_partial = ""
+        self.last_safety_event: Optional[str] = None
 
     def send(self, command: str) -> None:
         cmd = command.strip().upper()
@@ -101,7 +103,21 @@ class HeadOnlySerialSink:
         self._inner.send(cmd)
 
     def read_available(self, *, max_bytes: int = 2048) -> bytes:
-        return self._inner.read_available(max_bytes=max_bytes)
+        raw = self._inner.read_available(max_bytes=max_bytes)
+        if raw:
+            incoming = self._serial_partial + raw.decode("ascii", errors="replace")
+            *lines, self._serial_partial = incoming.split("\\n")
+            self._serial_partial = self._serial_partial[-256:]
+            for line in lines:
+                line = line.strip()
+                # Store ESP32's actual diagnostic line, not a guess inferred
+                # from presenter detection or an old ARM-success message.
+                if line.startswith("[Safety] FAULT=") or line in (
+                    "[Safety] ARM_REJECTED",
+                    "[Safety] RESET_REJECTED",
+                ) or line.startswith("[Safety] MOTION_REJECTED="):
+                    self.last_safety_event = line[:180]
+        return raw
 
     def close(self) -> None:
         self._inner.close()
@@ -171,12 +187,16 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status.update(presenter)
             status["simulation"] = False
             status["uart_poll_error"] = self._uart_poll_error
+            status["uart_last_safety_event"] = self.sink.last_safety_event
             status["arm_error"] = self._last_arm_error
             status["fault_cause"] = (
                 "UART_POLL_" + self._uart_poll_error if self._uart_poll_error else
+                self.sink.last_safety_event if status["mode"] == "ESTOP"
+                    and self.sink.last_safety_event else
                 "ESP32_REPORTED_LATCHED" if status["fw_safety"] == "LATCHED" else
                 "SERIAL_TRANSPORT_FAULT" if status["transport_fault"] else
-                "ESTOP_SOURCE_UNKNOWN" if status["mode"] == "ESTOP" else None
+                ("ESTOP_UNKNOWN__" + status["stop_reason"]) if
+                    status["mode"] == "ESTOP" else None
             )
             status["simulated_esp32"] = False
             status["head_only_test"] = self.head_enabled and not self.body_enabled
