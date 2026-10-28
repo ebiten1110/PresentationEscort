@@ -78,6 +78,11 @@ class OperatorRuntime:
                 "inference_ms": self._last_inference_ms,
                 "last_command": gs.last_command,
                 "transport_fault": gs.transport_fault,
+                "stop_reason": gs.stop_reason,
+                "fault_cause": gs.fault_cause,
+                "arm_error": gs.arm_error,
+                "fw_arm_pending": self.gateway.firmware_arm_pending("AUTO"),
+                "uart_poll_error": getattr(self, "_uart_poll_error", None),
                 "fw_safety": self.gateway.firmware_safety_status(),
                 "message": self._last_event,
             }
