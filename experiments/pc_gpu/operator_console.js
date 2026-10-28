@@ -3,6 +3,7 @@
   let token = "";
   let connection = false;
   let currentMode = "SAFE";
+  let pendingAuto = false;
   let manualTimer = null;
   let holding = null;
   let lastLockState = "UNLOCKED";
@@ -35,6 +36,7 @@
   async function act(action) {
     try {
       const res = await call("/api/action", {action});
+      pendingAuto = action === "auto" && !!res.pending;
       byId("feedback").textContent = res.pending
         ? action.toUpperCase() + "：ESP32の応答待ち"
         : res.ok ? action.toUpperCase() + " 実行" : res.error;
@@ -114,7 +116,28 @@
       byId("reason").textContent = fmt(status.reason);
       byId("last").textContent = fmt(status.last_command);
       byId("event").textContent = fmt(status.message);
-      byId("ready").textContent = status.auto_ready ? "可能" : "未準備";
+      byId("ready").textContent = status.auto_ready ? "可能" : "未準備（対象または通信未成立）";
+      byId("lock-reason").textContent = fmt(status.lock_reason);
+      const fault = status.uart_poll_error
+        ? "UART_POLL_" + status.uart_poll_error
+        : status.fault_cause || status.arm_error || null;
+      byId("fault-cause").textContent = fault || "なし";
+      byId("fw-arm-status").textContent = status.fw_arm_pending
+        ? "ARM受付応答を待機中"
+        : status.mode === "AUTO" ? "ARM成立／AUTO"
+        : status.arm_error || (status.mode === "ESTOP" ? "ESTOP／ARM不可" : "待機／未ARM");
+      if (pendingAuto) {
+        if (status.mode === "AUTO") {
+          byId("feedback").textContent = "AUTO：ESP32 ARM成立・追従中";
+          pendingAuto = false;
+        } else if (status.mode === "ESTOP") {
+          byId("feedback").textContent = "AUTO中断：" + (fault || "緊急停止");
+          pendingAuto = false;
+        } else if (status.arm_error || !status.fw_arm_pending) {
+          byId("feedback").textContent = "AUTO未成立：" + (status.arm_error || status.reason);
+          pendingAuto = false;
+        }
+      }
       byId("auto").disabled = !status.auto_ready || status.mode === "ESTOP";
       byId("manual").disabled = status.mode === "ESTOP" || !simulated;
       byId("stop").disabled = false;
