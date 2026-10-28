@@ -36,7 +36,7 @@
     try {
       const res = await call("/api/action", {action});
       byId("feedback").textContent = res.pending
-        ? action.toUpperCase() + "：模擬ESP32の応答待ち"
+        ? action.toUpperCase() + "：ESP32の応答待ち"
         : res.ok ? action.toUpperCase() + " 実行" : res.error;
       await refresh();
     } catch (err) {
@@ -101,18 +101,28 @@
       byId("person").textContent = status.target_found ? "検出あり" : "検出なし";
       byId("rtt").textContent = status.rtt_ms == null ? "—" : status.rtt_ms + " ms";
       byId("fw").textContent = status.fw_safety;
+      const simulated = status.simulation !== false;
+      const headOnly = !simulated && status.head_only_test === true;
+      const modeLabel = simulated ? "仮想ESP32 / 実モーター出力なし"
+        : headOnly ? "実ESP32 / 首Yawのみ最大±3°"
+        : "実ESP32 / 監視のみ・駆動禁止";
+      byId("motor").textContent = status.motor_status || modeLabel;
+      byId("runtime-subtitle").textContent = simulated
+        ? "シミュレーション中｜実モーター出力なし"
+        : "実ESP32に接続中｜サーボ電源は実測不可（申告：" +
+          (status.servo_power_declared || "不明") + "）｜STOPでは電源遮断不可";
       byId("reason").textContent = fmt(status.reason);
       byId("last").textContent = fmt(status.last_command);
       byId("event").textContent = fmt(status.message);
       byId("ready").textContent = status.auto_ready ? "可能" : "未準備";
       byId("auto").disabled = !status.auto_ready || status.mode === "ESTOP";
-      byId("manual").disabled = status.mode === "ESTOP";
+      byId("manual").disabled = status.mode === "ESTOP" || !simulated;
       byId("stop").disabled = false;
       byId("estop").disabled = false;
       byId("reset").disabled = status.mode !== "ESTOP";
-      ["left", "right"].forEach(id => byId(id).disabled = status.mode !== "MANUAL");
+      ["left", "right"].forEach(id => byId(id).disabled = status.mode !== "MANUAL" || !simulated);
       updateCandidates(status);
-      byId("auth-message").textContent = "認証済み｜DRY RUN";
+      byId("auth-message").textContent = simulated ? "認証済み｜DRY RUN" : "認証済み｜実ESP32";
     } catch (err) {
       byId("auth-message").textContent = "更新に失敗: " + err.message;
     }
