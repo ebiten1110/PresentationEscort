@@ -151,7 +151,8 @@ class PlannerTests(unittest.TestCase):
                 self.assertEqual(float(match[2]), 0.0)
 
     def test_body_planner_budget_requires_feedback(self):
-        p = HeadBodyTurnPlanner(max_turns=1)
+        sent_turns = [0]
+        p = HeadBodyTurnPlanner(max_turns=1, sent_turns=lambda: sent_turns[0])
         target = detection_to_person_target(DetectionResult(
             found=True, center_x=270, center_y=110, width=70,
             height=160, confidence=.88, class_id=0, class_name="person",
@@ -165,6 +166,9 @@ class PlannerTests(unittest.TestCase):
         b = p.step(target, now=10.2, head_yaw_feedback_deg=0.,
                    head_feedback_fresh=True, body_idle=True)
         self.assertTrue(any(x.body_command in ("TRACK_LEFT", "TRACK_RIGHT") for x in (a,b)))
+        # Merely proposing while SAFE must not consume the real UART budget.
+        self.assertEqual(p.remaining_turns, 1)
+        sent_turns[0] = 1
         self.assertEqual(p.remaining_turns, 0)
         self.assertTrue(abs(p.yaw_target_deg) <= 3.0)
         self.assertEqual(p.pitch_target_deg, 0.0)
