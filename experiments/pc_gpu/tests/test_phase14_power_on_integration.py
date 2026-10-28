@@ -159,6 +159,43 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertIsNone(state["arm_error"])
         self.assertEqual(state["fw_safety"], "ARMED")
 
+    def test_second_auto_while_running_is_idempotent(self):
+        r = self.launch(body_enabled=True)
+        self.select(r)
+        self.assertTrue(r.action("auto")["ok"])
+        until(lambda: r.status()["mode"] == "AUTO")
+        before = self.uart.commands.count("SAFETY_ARM")
+        self.assertEqual(before, 1)
+        response = r.action("auto")
+        self.assertTrue(response["ok"])
+        self.assertTrue(response["already_active"])
+        self.assertEqual(self.uart.commands.count("SAFETY_ARM"), before)
+        self.assertEqual(r.status()["mode"], "AUTO")
+
+    def test_second_auto_during_pending_uses_one_arm_request(self):
+        r = self.launch()
+        self.select(r)
+        first = r.action("auto")
+        self.assertTrue(first["ok"])
+        self.assertTrue(first["pending"])
+        second = r.action("auto")
+        self.assertTrue(second["ok"])
+        self.assertTrue(second["pending"])
+        self.assertEqual(self.uart.commands.count("SAFETY_ARM"), 1)
+        until(lambda: r.status()["mode"] == "AUTO")
+        self.assertEqual(self.uart.commands.count("SAFETY_ARM"), 1)
+
+    def test_auto_not_armed_without_firmware_disarmed_status(self):
+        r = self.launch()
+        self.select(r)
+        # A non-DISARMED firmware status is never another ARM opportunity.
+        r.gateway._firmware_safety.state = "UNKNOWN"
+        self.assertFalse(r.status()["auto_ready"])
+        response = r.action("auto")
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"], "ESP32_NOT_DISARMED_OR_NOT_READY")
+        self.assertNotIn("SAFETY_ARM", self.uart.commands)
+
     def test_serial_disconnect_forces_estop(self):
         r = self.launch()
         self.uart.link_broken = True
