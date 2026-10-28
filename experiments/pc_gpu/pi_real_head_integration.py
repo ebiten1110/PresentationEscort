@@ -106,7 +106,7 @@ class HeadOnlySerialSink:
         raw = self._inner.read_available(max_bytes=max_bytes)
         if raw:
             incoming = self._serial_partial + raw.decode("ascii", errors="replace")
-            *lines, self._serial_partial = incoming.split("\\n")
+            *lines, self._serial_partial = incoming.split("\n")
             self._serial_partial = self._serial_partial[-256:]
             for line in lines:
                 line = line.strip()
