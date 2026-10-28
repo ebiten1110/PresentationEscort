@@ -16,6 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pi_real_head_integration import HeadOnlyPlanner, LockedRealRuntime, main
+from detection_protocol import DetectionResult
 from pi_showtime_smoke import frame
 from person_target_adapter import detection_to_person_target
 from virtual_esp32 import VirtualEsp32
@@ -108,7 +109,11 @@ class PlannerTests(unittest.TestCase):
     def test_internal_state_and_commands_never_exceed_yaw_bound(self):
         p = HeadOnlyPlanner()
         for i in range(80):
-            target = detection_to_person_target(frame(1))
+            target = detection_to_person_target(DetectionResult(
+                found=True, center_x=243, center_y=115, width=70,
+                height=180, confidence=.88, class_id=0,
+                class_name="person", frame_width=320, frame_height=240
+            ))
             self.assertIsNotNone(target)
             result = p.step(target, now=1.0 + i * .07,
                             head_yaw_feedback_deg=0,
