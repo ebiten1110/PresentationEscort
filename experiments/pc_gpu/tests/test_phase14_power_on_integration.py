@@ -211,6 +211,34 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertEqual(response["error"], "ESP32_NOT_DISARMED_OR_NOT_READY")
         self.assertNotIn("SAFETY_ARM", self.uart.commands)
 
+    def test_operator_status_exposes_esp32_internal_feedback_not_physical_sensor(self):
+        r = self.launch()
+        r.controller.telemetry.feed(
+            b"[HeadState] currentYaw=-3.0 targetYaw=-3.0 currentPitch=0.0 targetPitch=0.0 moving=NO\\n"
+            b"Walking State: IDLE\\nBusy: NO\\n",
+        )
+        state = r.status()
+        self.assertTrue(state["esp32_head_feedback"]["fresh"])
+        self.assertEqual(state["esp32_head_feedback"]["yaw_deg"], -3.0)
+        self.assertEqual(state["esp32_walking_feedback"]["state"], "IDLE")
+        self.assertTrue(state["esp32_walking_feedback"]["idle_confirmed"])
+
+    def test_uart_pwm_diagnostic_parsed_independently_of_safety(self):
+        sink = HeadOnlySerialSink("mock-ch340", head_enabled=True)
+        self.addCleanup(sink.close)
+        from unittest.mock import patch as mock_patch
+        with mock_patch.object(sink._inner, "read_available", side_effect=[
+            b"[ServoDiag] PCA9685_I2C=ACK address=0x40\\n",
+            b"[ServoDiag] PWM ch=2 angle=-3.0 duty=309 i2c=NO_ACK\\n",
+        ]):
+            sink.read_available()
+            sink.read_available()
+        self.assertEqual(
+            sink.last_servo_diagnostic,
+            "[ServoDiag] PWM ch=2 angle=-3.0 duty=309 i2c=NO_ACK"
+        )
+        self.assertIsNone(sink.last_safety_event)
+
     def test_serial_disconnect_forces_estop(self):
         r = self.launch()
         self.uart.link_broken = True
