@@ -115,6 +115,50 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertNotIn("TRACK_FORWARD", self.uart.commands)
         self.assertNotIn("TRACK_BACKWARD", self.uart.commands)
 
+    def test_presenter_loss_is_not_same_as_uart_fault(self):
+        r = self.launch(body_enabled=True)
+        self.select(r)
+        self.assertTrue(r.action("auto")["ok"])
+        until(lambda: r.status()["mode"] == "AUTO")
+        # Valid camera detection can continue while the operator-selected
+        # presenter is no longer one of the visible candidates.
+        from pi_showtime_smoke import frame as make_frame
+        bad = make_frame(6, visible=False)
+        r.process_detection(bad, 65.)
+        status = r.status()
+        self.assertEqual(status["mode"], "SAFE")
+        self.assertEqual(status["lock_reason"], "TARGET_MISSING_OR_MULTIPLE_MATCHES")
+        self.assertFalse(status["target_found"])
+        self.assertFalse(status["auto_ready"])
+        self.assertFalse(status["fw_arm_pending"])
+        self.assertIsNone(status["fault_cause"])
+        self.assertIn("STOP", self.uart.commands)
+
+    def test_serial_poll_failure_cause_survives_presenter_event(self):
+        r = self.launch(body_enabled=True)
+        self.select(r)
+        self.uart.link_broken = True
+        until(lambda: r.status()["mode"] == "ESTOP")
+        first = r.status()
+        self.assertEqual(first["uart_poll_error"], "OSError")
+        self.assertEqual(first["fault_cause"], "UART_POLL_OSError")
+        r.process_detection(frame(6, visible=False), 65.)
+        latest = r.status()
+        self.assertEqual(latest["uart_poll_error"], "OSError")
+        self.assertEqual(latest["fault_cause"], "UART_POLL_OSError")
+        self.assertNotIn("SAFETY_ARM", self.uart.commands)
+
+    def test_firmware_handshake_success_is_exposed(self):
+        r = self.launch()
+        self.select(r)
+        result = r.action("auto")
+        self.assertTrue(result["ok"])
+        until(lambda: r.status()["mode"] == "AUTO")
+        state = r.status()
+        self.assertFalse(state["fw_arm_pending"])
+        self.assertIsNone(state["arm_error"])
+        self.assertEqual(state["fw_safety"], "ARMED")
+
     def test_serial_disconnect_forces_estop(self):
         r = self.launch()
         self.uart.link_broken = True
