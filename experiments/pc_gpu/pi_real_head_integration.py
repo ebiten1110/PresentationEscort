@@ -20,6 +20,7 @@ from esp32_feedback_poller import Esp32FeedbackPoller
 from motion_gateway import PiMotionGateway
 from pi_operator_console import CameraInferenceWorker, OperatorRuntime, OperatorServer
 from pi_presenter_lock_demo import LockedSimulationRuntime
+from presenter_lock import PresenterLock
 from remote_person_controller import RemotePersonController
 from safety_manager import Mode
 from serial_command_sink import SerialCommandSink
@@ -134,6 +135,10 @@ class LockedRealRuntime(LockedSimulationRuntime):
         if body_enabled and not head_enabled:
             raise ValueError("body turns require head control opt-in")
         super().__init__()
+        # Single stable presenter auto-selected for convenience. Motion remains
+        # disarmed until explicit operator AUTO. Short loss still issues STOP.
+        self.presenter = PresenterLock(auto_select_single=True, transient_recovery_s=0.9)
+        self._preview_jpeg: Optional[bytes] = None
         # Superclass has not started any threads or issued any commands.
         self.sink.close()
         self.sink = HeadOnlySerialSink(
@@ -152,6 +157,45 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self._uart_poll_error: Optional[str] = None
         self._arm_wait_since: Optional[float] = None
         self._last_arm_error: Optional[str] = None
+
+    def publish_preview(self, frame, detection) -> None:
+        """Draw locally selected presenter vs other detections in the camera view."""
+        import cv2
+        with self._guard:
+            view = self.presenter.display(now=time.monotonic())
+            selected = view.get("selected_index") if view["lock_state"] == "TRACKING" else None
+            boxes = list(self.presenter.candidates)
+            state = view["lock_state"]
+        img = frame.copy()
+        height, width = img.shape[:2]
+        # This frame is not a person ID: color indicates the operator's
+        # continuity-selected target, not biometrics/re-identification.
+        for idx, box in enumerate(boxes):
+            active = idx == selected
+            color = (76, 220, 100) if active else (150, 156, 170)
+            cv2.rectangle(img, (box.x1, box.y1), (box.x2, box.y2), color, 3 if active else 1)
+            label = ("LOCKED" if active else "OTHER") + f" {idx+1} {box.confidence:.0%}"
+            cv2.putText(img, label, (max(0, box.x1), max(19, box.y1 - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, .54, color, 2, cv2.LINE_AA)
+        cx, cy = width // 2, height // 2
+        cv2.line(img, (cx - 13, cy), (cx + 13, cy), (240, 245, 250), 1)
+        cv2.line(img, (cx, cy - 13), (cx, cy + 13), (240, 245, 250), 1)
+        cv2.putText(img, state, (10, height - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, .52, (235, 240, 255), 2, cv2.LINE_AA)
+        ok, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 72])
+        if ok:
+            with self._guard:
+                self._preview_jpeg = encoded.tobytes()
+
+    def get_preview(self) -> Optional[bytes]:
+        with self._guard:
+            return self._preview_jpeg
+
+    def set_camera_state(self, active: bool, connected: bool) -> None:
+        with self._guard:
+            super().set_camera_state(active, connected)
+            if not connected:
+                self._preview_jpeg = None
 
     def _poll_loop(self) -> None:
         """Real UART reader: persist errors beyond the next presenter event."""
@@ -288,6 +332,9 @@ def main(argv: Optional[list[str]] = None) -> None:
                     help="Optional Pi camera via TCP/SSH to RTX4060 PC")
     ap.add_argument("--pc-port", type=int, default=8765)
     ap.add_argument("--camera-index", type=int, default=0)
+    ap.add_argument("--camera-width", type=int, default=640)
+    ap.add_argument("--camera-height", type=int, default=480)
+    ap.add_argument("--jpeg-quality", type=int, default=80)
     ap.add_argument("--port", type=int, default=8766)
     power_group = ap.add_mutually_exclusive_group(required=True)
     power_group.add_argument("--servo-power-on", action="store_true",
@@ -335,6 +382,9 @@ def main(argv: Optional[list[str]] = None) -> None:
             worker = CameraInferenceWorker(
                 runtime, args.pc_host, port=args.pc_port,
                 camera_index=args.camera_index,
+                camera_width=args.camera_width,
+                camera_height=args.camera_height,
+                jpeg_quality=args.jpeg_quality,
             )
             worker.start()
         token = secrets.token_urlsafe(32)
