@@ -154,9 +154,28 @@ class HeadOnlySerialSink:
 
     def send(self, command: str) -> None:
         cmd = command.strip().upper()
+        if cmd.startswith("RGB_"):
+            # The historical Phase10 transport is intentionally immutable.
+            # Its motor allowlist does not include the two new *indicators*.
+            # Send ONLY RED/YELLOW through the same guarded serial handle.
+            # WHITE remains exclusively owned by ESP32's ARMED watchdog.
+            if cmd not in ("RGB_RED", "RGB_YELLOW"):
+                raise ValueError("Pi may only indicate RED or YELLOW")
+            port = getattr(self._inner, "_serial", None)
+            lock = getattr(self._inner, "_lock", None)
+            if port is not None and lock is not None:
+                payload = (cmd + "\n").encode("ascii")
+                with lock:
+                    if not bool(getattr(port, "is_open", False)):
+                        raise ConnectionError("serial port not open")
+                    if port.write(payload) != len(payload):
+                        raise IOError("incomplete LED indication write")
+                return
+            # VirtualEsp32 tests have no pyserial handle.
+            self._inner.send(cmd)
+            return
         if cmd.startswith("TRACK_") or cmd in {"LEFT", "RIGHT", "FORWARD", "BACKWARD", "STAND"}:
-            if not (self.body_enabled and cmd in {"TRACK_LEFT", "TRACK_RIGHT"}
-):
+            if not (self.body_enabled and cmd in {"TRACK_LEFT", "TRACK_RIGHT"}):
                 raise ValueError("only TRACK_LEFT / TRACK_RIGHT are enabled; translation blocked")
         pose = _POSE.fullmatch(cmd)
         if pose is not None:
