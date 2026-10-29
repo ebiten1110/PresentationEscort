@@ -234,6 +234,7 @@ class PresenterLock:
         chosen_index = next((i for i, box in enumerate(candidates) if box is chosen), -1)
         face_x = round(chosen.cx)
         face_y = round(chosen.cy)
+        aim_source = ""
         if (chosen_index >= 0 and isinstance(detection.aim_points, list)
                 and chosen_index < len(detection.aim_points)):
             aim = detection.aim_points[chosen_index]
@@ -242,9 +243,11 @@ class PresenterLock:
                     and chosen.x1 <= aim["x"] <= chosen.x2
                     and chosen.y1 <= aim["y"] <= chosen.y2):
                 face_x, face_y = aim["x"], aim["y"]
+                aim_source = aim.get("source") if aim.get("source") in ("face", "shoulders", "upper_body") else ""
         return replace(
             detection, found=True, center_x=round(chosen.cx),
             center_y=round(chosen.cy), aim_x=face_x, aim_y=face_y,
+            aim_source=aim_source,
             width=chosen.width,
             height=chosen.height, confidence=chosen.confidence,
             class_id=0, class_name="person",
