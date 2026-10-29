@@ -108,6 +108,26 @@ class PresenterLockTests(unittest.TestCase):
         self.assertEqual(self.lock.reason, "VISUAL_REACQUIRED_GESTURE_REQUIRED")
         self.assertEqual(self.lock.gesture_event_id, event_id)
 
+        # Only the existing safety controller's confirmed in-AUTO recovery
+        # may clear the reminder; it must not forge a fresh gesture event.
+        self.lock.confirm_bounded_reacquisition()
+        self.assertEqual(self.lock.reason, "AUTO_RECALIBRATED_SAME_TRACK")
+        self.assertEqual(self.lock.gesture_event_id, event_id)
+
+    def test_small_far_person_can_move_across_two_slow_camera_frames(self):
+        self.acquire([candidate(70, w=19, h=55, conf=.9)])
+        first = self.lock.observe(
+            frame(2, [candidate(98, w=20, h=55, conf=.9)]), now=10.2)
+        self.assertTrue(first.found)
+        self.assertTrue(self.lock.locked)
+
+    def test_far_person_does_not_handoff_to_distant_stranger(self):
+        self.acquire([candidate(70, w=19, h=55, conf=.9)])
+        result = self.lock.observe(
+            frame(2, [candidate(220, w=20, h=55, conf=.9)]), now=10.2)
+        self.assertFalse(result.found)
+        self.assertEqual(self.lock.state, "LOST")
+
     def test_occlusion_and_crossing_immediate_loss(self):
         self.acquire()
         self.assertFalse(self.lock.observe(frame(2, [candidate(20), candidate(38)]), now=10.15).found)

@@ -96,6 +96,17 @@ class PresenterLock:
         self._recovery_deadline = None
         self._single_candidate_streak = 0
 
+    def confirm_bounded_reacquisition(self) -> None:
+        """Clear the gesture reminder after safety's 3-frame in-AUTO recovery.
+
+        Never creates a new gesture event or arms motors. Call only when the
+        existing AUTO session survived its bounded missing-target window.
+        """
+        if self.locked and self.state == "TRACKING" and self._needs_resume_gesture:
+            self._needs_resume_gesture = False
+            self._gesture_streak = 0
+            self.reason = "AUTO_RECALIBRATED_SAME_TRACK"
+
     def observe(self, detection: DetectionResult, *, now: float) -> DetectionResult:
         """Process complete V2 frames; output only a human-locked person."""
         suppressed = replace(
@@ -151,6 +162,7 @@ class PresenterLock:
                 self._lose("INVALID_PERSON_BOX")
                 return suppressed
             candidates.append(box)
+        previous_candidate_count = len(self.candidates)
         self.candidates = candidates
         self._last_gestures = detection.gesture_indices if isinstance(detection.gesture_indices, list) else []
         self._history[self._last_seq] = (now, list(candidates))
@@ -236,6 +248,20 @@ class PresenterLock:
                     abs(face["y"] - self._locked_aim[1]) <= 28 and
                     .55 <= candidate.width / original.width <= 1.80 and
                     .50 <= candidate.height / original.height <= 2.20):
+                allowed = [candidate]
+        # A single person can shift more than half of a *tiny* far-distance
+        # box between consecutive ~5 FPS camera frames. Bound the additional
+        # tolerance in image pixels and require a unique, high-confidence
+        # candidate; in a crowd retain the original strict gate.
+        if (not allowed and previous_candidate_count == 1 and
+                len(candidates) == 1 and candidates[0].confidence >= .70):
+            candidate = candidates[0]
+            if (0.60 <= candidate.width / original.width <= 1.60
+                    and 0.60 <= candidate.height / original.height <= 1.60
+                    and abs(candidate.cx - original.cx) <= max(
+                        original.width * .52, detection.frame_width * .10)
+                    and abs(candidate.cy - original.cy) <= max(
+                        original.height * .30, detection.frame_height * .10)):
                 allowed = [candidate]
         # During a bounded detector dropout, retain a single significantly
         # overlapping person as a VISUAL hint only. The first lost frame

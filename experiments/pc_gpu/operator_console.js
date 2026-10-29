@@ -233,6 +233,12 @@
         ? fmt(follow.reason) + " / 首送信 " + fmt(follow.head_sent) +
           " / 本体送信 " + fmt(follow.body_sent) +
           " / 方位 " + fmt(follow.bearing_deg) + "°" +
+          (status.distance_adaptive_head
+            ? " / 距離感度 " + fmt(status.apparent_distance_gain) + "倍（画像サイズ推定）"
+            : "") +
+          (status.responsive_follow ? " / 低遅延追従ON" : "") +
+          (status.auto_recalibrate_brief_loss
+            ? " / 短時間消失は自動再認識（STOP後の自動起動なし）" : "") +
           (status.pitch_tracking_enabled
             ? " / 上下目標 " + fmt(follow.pitch_target_deg) + "°" +
               "（実測報告 " + fmt(head && head.pitch_deg) + "°、速度上限 " +

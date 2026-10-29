@@ -25,7 +25,50 @@ def face_target(*, x: int, y: int):
     return target
 
 
+def sized_face_target(*, x: int, width: int, height: int):
+    detection = DetectionResult(
+        found=True, center_x=x, center_y=110, width=width, height=height,
+        class_id=0, class_name="person", confidence=.95,
+        aim_x=x, aim_y=120, aim_source="face",
+        frame_width=320, frame_height=240,
+    )
+    target = detection_to_person_target(detection)
+    assert target is not None
+    return target
+
+
 class SmoothFaceTests(unittest.TestCase):
+    def test_faraway_person_damps_yaw_not_physical_angle_limit(self):
+        def first_command(width, height, adaptive):
+            planner = HeadOnlyPlanner(head_speed_deg_s=10.,
+                distance_adaptive_head=adaptive)
+            plan = planner.step(sized_face_target(x=40, width=width, height=height),
+                now=1., head_yaw_feedback_deg=0.,
+                head_feedback_fresh=True)
+            return plan.yaw_target_deg, planner.distance_gain
+        near, near_gain = first_command(95, 175, True)
+        far, far_gain = first_command(20, 40, True)
+        legacy, legacy_gain = first_command(20, 40, False)
+        self.assertAlmostEqual(near_gain, 1.)
+        self.assertLess(far_gain, .5)
+        self.assertLess(abs(far), abs(near))
+        self.assertLess(abs(far), abs(legacy))
+        self.assertEqual(legacy_gain, 1.)
+
+    def test_responsive_follow_reduces_filter_lag_without_exceeding_slew_limit(self):
+        def second_command(responsive):
+            planner = HeadOnlyPlanner(head_speed_deg_s=10.,
+                                       responsive_follow=responsive)
+            planner.step(face_target(x=160, y=120), now=1.,
+                         head_yaw_feedback_deg=0., head_feedback_fresh=True)
+            plan = planner.step(face_target(x=125, y=120), now=1.10,
+                                head_yaw_feedback_deg=0., head_feedback_fresh=True)
+            return plan.yaw_target_deg
+        old = second_command(False)
+        quick = second_command(True)
+        self.assertGreater(abs(quick), abs(old))
+        self.assertLessEqual(abs(quick), 1.)
+
     def test_relative_pitch_reference_unpins_high_face_without_expanding_range(self):
         planner = HeadOnlyPlanner(pitch_min=-2., pitch_max=2.,
                                   relative_pitch_reference=True,

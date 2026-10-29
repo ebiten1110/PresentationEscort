@@ -50,6 +50,7 @@ class _SmoothHeadAiming:
     _yaw_gain_deg_per_px = 0.012
     _pitch_gain_deg_per_px = 0.010
     _correction_limit_deg = 0.60
+    _minimum_distance_gain = 0.35
 
     @staticmethod
     def _validate_pitch_speed(speed_deg_s: float) -> None:
@@ -70,6 +71,10 @@ class _SmoothHeadAiming:
         # image-Y baseline. It does NOT calibrate the mechanical servo origin.
         self.relative_pitch_reference = False
         self.pitch_reference_y: Optional[float] = None
+        self.distance_adaptive_head = False
+        self.responsive_follow = False
+        self.distance_gain = 1.0
+        self._distance_gain_at: Optional[float] = None
 
     def _reference_pitch_target(self, target):
         if not self.relative_pitch_reference or self.pitch_min == self.pitch_max:
@@ -86,10 +91,27 @@ class _SmoothHeadAiming:
             self._smoothed_error_y = float(target.error_y)
         else:
             elapsed = max(0.0, now - self._aim_last_at)
-            alpha = 1.0 - math.exp(-min(elapsed, 0.5) / self._aim_tau_s)
+            tau = 0.045 if self.responsive_follow else self._aim_tau_s
+            alpha = 1.0 - math.exp(-min(elapsed, 0.5) / tau)
             self._smoothed_error_x += alpha * (target.error_x - self._smoothed_error_x)
             self._smoothed_error_y += alpha * (target.error_y - self._smoothed_error_y)
         self._aim_last_at = now
+        if self.distance_adaptive_head:
+            # A 2-D box provides an apparent-size proxy, NOT metric depth.
+            # Use both dimensions so an unusually wide pose does not alone
+            # cause aggressive head movement. The baseline is frame-relative.
+            fraction = math.sqrt(
+                min(1.0, target.box_width / target.frame_width) *
+                min(1.0, target.box_height / target.frame_height))
+            raw_gain = max(self._minimum_distance_gain,
+                           min(1.0, fraction / .38))
+            if self._distance_gain_at is None:
+                self.distance_gain = raw_gain
+            else:
+                dt = max(0.0, min(.5, now - self._distance_gain_at))
+                alpha = 1.0 - math.exp(-dt / .3)
+                self.distance_gain += alpha * (raw_gain - self.distance_gain)
+            self._distance_gain_at = now
         return replace(target, error_x=round(self._smoothed_error_x),
                        error_y=round(self._smoothed_error_y))
 
@@ -99,6 +121,8 @@ class _SmoothHeadAiming:
         self._smoothed_error_y = None
         self._aim_last_at = None
         self.pitch_reference_y = None
+        self._distance_gain_at = None
+        self.distance_gain = 1.0
         return super().target_lost()
 
     @staticmethod
@@ -135,6 +159,9 @@ class _SmoothHeadAiming:
         virtual_y = round(target.error_y * VIRTUAL_FRAME_HEIGHT / target.frame_height)
         yaw_delta = self._proportional_delta(
             virtual_x, HEAD_X_DEADZONE_PX, self._yaw_gain_deg_per_px)
+        # Scale AFTER limiting the delta. Otherwise a large faraway pixel
+        # error hits the same 0.6-degree cap and defeats distance damping.
+        yaw_delta *= self.distance_gain if self.distance_adaptive_head else 1.0
         pitch_delta = (self._proportional_delta(
             virtual_y, HEAD_Y_DEADZONE_PX, self._pitch_gain_deg_per_px)
             if plan.pitch_tracking_enabled else 0.0)
@@ -188,6 +215,8 @@ class HeadOnlyPlanner(_SmoothHeadAiming, V883PersonDualLoop):
                  invert_horizontal: bool = False,
                  invert_vertical: bool = False,
                  relative_pitch_reference: bool = False,
+                 distance_adaptive_head: bool = False,
+                 responsive_follow: bool = False,
                  head_speed_deg_s: float = 3.0,
                  pitch_speed_deg_s: Optional[float] = None):
         super().__init__()
@@ -200,6 +229,8 @@ class HeadOnlyPlanner(_SmoothHeadAiming, V883PersonDualLoop):
         self.invert_horizontal = invert_horizontal
         self.invert_vertical = invert_vertical
         self.relative_pitch_reference = relative_pitch_reference
+        self.distance_adaptive_head = distance_adaptive_head
+        self.responsive_follow = responsive_follow
 
     def step(self, target, *, now: float, **kwargs):
         if self.invert_horizontal:
@@ -233,6 +264,8 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
                  invert_vertical: bool = False,
                  relative_pitch_reference: bool = False,
                  reverse_body_turn_direction: bool = False,
+                 distance_adaptive_head: bool = False,
+                 responsive_follow: bool = False,
                  head_speed_deg_s: float = 3.0,
                  pitch_speed_deg_s: Optional[float] = None):
         super().__init__()
@@ -249,6 +282,8 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
         self.invert_vertical = invert_vertical
         self.relative_pitch_reference = relative_pitch_reference
         self.reverse_body_turn_direction = reverse_body_turn_direction
+        self.distance_adaptive_head = distance_adaptive_head
+        self.responsive_follow = responsive_follow
         self._turn_proposals = 0
         self._proposal_direction = None
 
@@ -507,6 +542,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  invert_vertical: bool = False,
                  relative_pitch_reference: bool = False,
                  reverse_body_turn_direction: bool = False,
+                 distance_adaptive_head: bool = False,
+                 responsive_follow: bool = False,
+                 auto_recalibrate_brief_loss: bool = False,
                  head_speed_deg_s: float = 2.0,
                  pitch_speed_deg_s: Optional[float] = None,
                  capture_diagnostics: bool = False) -> None:
@@ -525,6 +563,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self.invert_vertical = invert_vertical
         self.relative_pitch_reference = relative_pitch_reference
         self.reverse_body_turn_direction = reverse_body_turn_direction
+        self.distance_adaptive_head = distance_adaptive_head
+        self.responsive_follow = responsive_follow
+        self.auto_recalibrate_brief_loss = auto_recalibrate_brief_loss
         self.head_speed_deg_s = head_speed_deg_s
         self.pitch_speed_deg_s = (head_speed_deg_s if pitch_speed_deg_s is None
                                   else pitch_speed_deg_s)
@@ -556,6 +597,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 invert_vertical=invert_vertical,
                 relative_pitch_reference=relative_pitch_reference,
                 reverse_body_turn_direction=reverse_body_turn_direction,
+                distance_adaptive_head=distance_adaptive_head,
+                responsive_follow=responsive_follow,
                 head_speed_deg_s=head_speed_deg_s,
                 pitch_speed_deg_s=pitch_speed_deg_s,
             ) if body_enabled else HeadOnlyPlanner(
@@ -563,6 +606,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 invert_horizontal=invert_horizontal,
                 invert_vertical=invert_vertical,
                 relative_pitch_reference=relative_pitch_reference,
+                distance_adaptive_head=distance_adaptive_head,
+                responsive_follow=responsive_follow,
                 head_speed_deg_s=head_speed_deg_s,
                 pitch_speed_deg_s=pitch_speed_deg_s)),
             enable_actuation=head_enabled,
@@ -624,6 +669,37 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 or self.controller.planner.motion_pending):
             return None
         return previous.plan.suggested_body_turn
+
+    def _can_hold_brief_visual_loss(self, detection, rtt_ms: float, now: float) -> bool:
+        """Retain an existing ARM briefly, sending NO blind motor commands.
+
+        No fresh person: permit at most 1.5 s of stationary search, with
+        multi-frame visual reconfirmation. STOP and ESP32 loss still disarm.
+        """
+        if (not self.auto_recalibrate_brief_loss or
+                not self.gesture_control_enabled or
+                self.gateway.status().safety.mode != Mode.AUTO or
+                self.gateway.firmware_safety_status() != "ARMED" or
+                self.presenter.state != "TRACKING" or
+                self.presenter._locked is None or
+                len(self.presenter.candidates) != 1 or
+                self.presenter._frame_time is None or
+                not 0 <= now - self.presenter._frame_time <= .45 or
+                detection.error or detection.protocol_version != 2 or
+                type(detection.frame_seq) is not int or
+                detection.frame_seq != self.presenter._last_seq + 1 or
+                detection.people != [] or
+                self.presenter._frame_size != (detection.frame_width,
+                                               detection.frame_height) or
+                not math.isfinite(rtt_ms) or not 0 <= rtt_ms <= 500):
+            return False
+        previous = getattr(self, "_last_cycle", None)
+        if previous is None or not previous.target_valid:
+            return False
+        telemetry = self.controller.telemetry.snapshot(now=now)
+        return (telemetry.head_fresh and telemetry.body_idle_confirmed and
+                self.controller._pending_turn is None and
+                not self.controller.planner.motion_pending)
 
     def publish_preview(self, frame, detection) -> None:
         """Render a target-to-center vector, action zone and last seen bearing."""
@@ -714,7 +790,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
         elif state in ("LOST", "TEMPORARILY_LOST") and last_aim is not None and now-last_seen_at < 3.:
             lx, ly = last_aim
             direction = "RIGHT" if lx > cx else "LEFT" if lx < cx else "CENTER"
-            heading = (f"SEARCHING {self._search_direction} / 1 TURN MAX - LAST SEEN {direction}"
+            heading = (f"SEARCHING {self._search_direction} - LAST SEEN {direction}"
                        if self.gateway.safety.recovering else
                        f"TARGET LOST / STOP - LAST SEEN {direction}")
             cv2.circle(img, (lx, ly), 13, (40, 65, 250), 2, cv2.LINE_AA)
@@ -878,6 +954,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
             )
             status["search_reacquire_frames"] = self.gateway.safety._recovery_confirmed
             status["search_max_turns"] = 1
+            if self._search_direction == "HOLD":
+                status["search_max_turns"] = 0
             status["led_indicated_color"] = (
                 "WHITE" if status["mode"] == "AUTO" and status["fw_safety"] == "ARMED"
                 else "YELLOW" if self.gesture_control_enabled and
@@ -910,6 +988,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status["pitch_tracking_enabled"] = self.pitch_bounds != (0.0, 0.0)
             status["relative_pitch_reference"] = self.relative_pitch_reference
             status["reverse_body_turn_direction"] = self.reverse_body_turn_direction
+            status["distance_adaptive_head"] = self.distance_adaptive_head
+            status["apparent_distance_gain"] = round(
+                self.controller.planner.distance_gain, 3)
+            status["responsive_follow"] = self.responsive_follow
+            status["auto_recalibrate_brief_loss"] = self.auto_recalibrate_brief_loss
             status["pitch_reference_y_normalized"] = (
                 round(self.controller.planner.pitch_reference_y, 4)
                 if self.controller.planner.pitch_reference_y is not None else None)
@@ -967,10 +1050,12 @@ class LockedRealRuntime(LockedSimulationRuntime):
             was_searching = self.gateway.safety.recovering
             proposal = None if was_searching else self._search_candidate(
                 detection, rtt_ms, now)
-            if proposal and self.gateway.safety.begin_recovery(now=now):
-                self._search_direction = proposal
+            hold = (not was_searching and proposal is None and
+                    self._can_hold_brief_visual_loss(detection, rtt_ms, now))
+            if (proposal or hold) and self.gateway.safety.begin_recovery(now=now):
+                self._search_direction = proposal if proposal else "HOLD"
                 self._search_started_at = now
-                self._search_result = "SEARCHING"
+                self._search_result = "SEARCHING" if proposal else "HOLDING_FOR_TARGET"
             super().process_detection(detection, rtt_ms)
             if self.gateway.safety.recovering:
                 if self.presenter.state not in ("TEMPORARILY_LOST", "TRACKING"):
@@ -992,6 +1077,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
             elif was_searching and self.gateway.status().safety.mode == Mode.AUTO:
                 self._search_result = "REACQUIRED_3_FRAMES"
                 self._search_direction = None
+                # Geometry re-lock is permitted ONLY within this surviving
+                # AUTO lease. No new gesture/ARM event is ever manufactured.
+                self.presenter.confirm_bounded_reacquisition()
             elif was_searching:
                 self._search_result = "SEARCH_STOPPED"
                 self._search_direction = None
@@ -1057,6 +1145,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 "pitch_speed_limit_deg_s", "vertical_direction",
                 "relative_pitch_reference", "pitch_reference_y_normalized",
                 "reverse_body_turn_direction",
+                "distance_adaptive_head", "apparent_distance_gain",
+                "responsive_follow", "auto_recalibrate_brief_loss",
                 "uart_head_pwm", "uart_last_servo_diagnostic",
                 "camera_capture_mode", "camera_stage_timing_ms",
             )
@@ -1160,6 +1250,12 @@ def main(argv: Optional[list[str]] = None) -> None:
                     help="Use the first locked face height as the image-Y reference, keeping existing calibrated servo limits")
     ap.add_argument("--reverse-body-turn-direction", action="store_true",
                     help="Swap physical TRACK_LEFT/RIGHT only, after observing reversed floor rotation")
+    ap.add_argument("--distance-adaptive-head", action="store_true",
+                    help="Dampen head yaw correction when the person's image box is small; not meter-based depth")
+    ap.add_argument("--responsive-follow", action="store_true",
+                    help="Use a lower-latency visual aim filter; physical slew caps still apply")
+    ap.add_argument("--auto-recalibrate-brief-loss", action="store_true",
+                    help="Within an already ARMED session, hold still during a bounded brief dropout and visually reacquire")
     ap.add_argument("--turn-stable-frames", type=int, default=4)
     ap.add_argument("--turn-settle-seconds", type=float, default=1.0)
     ap.add_argument("--turn-edge-fraction", type=float, default=.15)
@@ -1236,6 +1332,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         invert_vertical=args.reverse_vertical_direction,
         relative_pitch_reference=args.relative_pitch_reference,
         reverse_body_turn_direction=args.reverse_body_turn_direction,
+        distance_adaptive_head=args.distance_adaptive_head,
+        responsive_follow=args.responsive_follow,
+        auto_recalibrate_brief_loss=args.auto_recalibrate_brief_loss,
         head_speed_deg_s=args.head_speed_deg_per_second,
         pitch_speed_deg_s=args.pitch_speed_deg_per_second,
         capture_diagnostics=args.capture_diagnostics,

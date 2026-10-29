@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -12,6 +13,8 @@ from detection_protocol import DetectionResult
 from person_target_adapter import PersonTarget, detection_to_person_target
 from pi_real_head_integration import (HeadBodyTurnPlanner, HeadOnlyPlanner,
                                       HeadOnlySerialSink, LockedRealRuntime)
+from safety_manager import Mode, SafetyManager
+from presenter_lock import PresenterLock
 
 
 class FakeSerial:
@@ -30,6 +33,69 @@ class FakeSerial:
 
 
 class GuardTests(unittest.TestCase):
+    def test_short_auto_recovery_keeps_same_arm_without_forging_new_gesture(self):
+        presenter = PresenterLock(gesture_enabled=True,
+            gesture_confirm_frames=2, transient_recovery_s=1.5)
+        person = {"x1": 65, "y1": 15, "x2": 155, "y2": 225,
+                  "confidence": .95}
+        def observed(seq, boxes, gesture=False):
+            return presenter.observe(DetectionResult(
+                found=bool(boxes), protocol_version=2, frame_seq=seq,
+                frame_width=320, frame_height=240, people=boxes,
+                gesture_indices=[0] if gesture else []), now=1.+seq*.1)
+        observed(1, [person], True)
+        observed(2, [person], True)
+        observed(3, [person])
+        self.assertEqual(presenter.state, "TRACKING")
+        original_event = presenter.gesture_event_id
+        safety = SafetyManager()
+        for now in (1.1, 1.2, 1.3):
+            safety.observe_detection(True, 60., now=now)
+        self.assertTrue(safety.arm_auto(now=1.3))
+        self.assertTrue(safety.begin_recovery(now=1.4))
+        self.assertFalse(observed(4, []).found)
+        safety.observe_detection(False, 60., now=1.4)
+        for i in (5, 6, 7):
+            self.assertTrue(observed(i, [person]).found)
+            safety.observe_detection(True, 60., now=1.+i*.1)
+        self.assertFalse(safety.recovering)
+        self.assertEqual(safety.mode, Mode.AUTO)
+        presenter.confirm_bounded_reacquisition()
+        self.assertEqual(presenter.gesture_event_id, original_event)
+        self.assertEqual(presenter.reason, "AUTO_RECALIBRATED_SAME_TRACK")
+        safety.disarm("OPERATOR_DISARM")
+        for now in (1.8, 1.9, 2.0):
+            safety.observe_detection(True, 60., now=now)
+        self.assertEqual(safety.mode, Mode.SAFE)
+
+    def test_bounded_automatic_recalibration_requires_existing_auto_and_unique_target(self):
+        runtime = LockedRealRuntime.__new__(LockedRealRuntime)
+        runtime.auto_recalibrate_brief_loss = True
+        runtime.gesture_control_enabled = True
+        state = SimpleNamespace(mode=Mode.AUTO)
+        runtime.gateway = SimpleNamespace(
+            status=lambda: SimpleNamespace(safety=state),
+            firmware_safety_status=lambda: "ARMED")
+        runtime.presenter = SimpleNamespace(
+            state="TRACKING", _locked=object(), candidates=[object()],
+            _frame_time=4.9, _last_seq=12, _frame_size=(320, 240))
+        runtime._last_cycle = SimpleNamespace(target_valid=True)
+        runtime.controller = SimpleNamespace(
+            _pending_turn=None, planner=SimpleNamespace(motion_pending=False),
+            telemetry=SimpleNamespace(snapshot=lambda now: SimpleNamespace(
+                head_fresh=True, body_idle_confirmed=True)))
+        lost = DetectionResult(found=False, frame_width=320, frame_height=240,
+                               protocol_version=2, frame_seq=13, people=[])
+        self.assertTrue(runtime._can_hold_brief_visual_loss(lost, 65., 5.))
+        state.mode = Mode.SAFE
+        self.assertFalse(runtime._can_hold_brief_visual_loss(lost, 65., 5.))
+        state.mode = Mode.AUTO
+        runtime.presenter.candidates.append(object())
+        self.assertFalse(runtime._can_hold_brief_visual_loss(lost, 65., 5.))
+        runtime.presenter.candidates.pop()
+        runtime.controller._pending_turn = "TRACK_LEFT"
+        self.assertFalse(runtime._can_hold_brief_visual_loss(lost, 65., 5.))
+
     def setUp(self):
         self.fake = FakeSerial()
         self.patcher = patch("pi_real_head_integration.SerialCommandSink", return_value=self.fake)
