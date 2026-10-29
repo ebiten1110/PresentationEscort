@@ -44,3 +44,8 @@ footer{font-size:10px;color:#8194ac;text-align:center}
 @media(min-width:851px){body.authorized main{height:100dvh}}
 @media(max-width:850px){main{height:auto;min-height:100dvh}.workspace{grid-template-columns:1fr}.video-frame{height:auto;aspect-ratio:4/3}.status-strip{grid-template-columns:repeat(3,minmax(0,1fr))}.connection{font-size:10px}header{flex-wrap:wrap}.auth{flex-wrap:wrap}.camera-pane,.control-pane{min-height:unset}}
 @media(max-width:550px){main{padding:8px}.status-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.brand{flex-wrap:wrap}.connection{gap:7px}.candidate-row{flex-wrap:wrap}}
+
+.gesture-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.gesture-controls button{font-size:13px}
+#gesture-help{color:#a8c8e7;line-height:1.35}
+@media(max-width:440px){.gesture-controls{grid-template-columns:1fr}}
