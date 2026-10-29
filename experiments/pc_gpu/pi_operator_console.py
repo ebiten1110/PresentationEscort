@@ -158,6 +158,9 @@ class CameraInferenceWorker(threading.Thread):
         port: int = 8765,
         camera_index: int = 0,
         timeout_s: float = 30.0,  # First CUDA inference can exceed 10s; Pi safety tick runs independently.
+        camera_width: int = 640,
+        camera_height: int = 480,
+        jpeg_quality: int = 80,
     ) -> None:
         super().__init__(name="camera-inference-dry-run", daemon=True)
         self.runtime = runtime
@@ -165,6 +168,13 @@ class CameraInferenceWorker(threading.Thread):
         self.port = port
         self.camera_index = camera_index
         self.timeout_s = timeout_s
+        if camera_width < 160 or camera_width > 1920 or camera_height < 120 or camera_height > 1080:
+            raise ValueError("camera resolution outside supported range")
+        if not 30 <= jpeg_quality <= 95:
+            raise ValueError("jpeg quality outside supported range")
+        self.camera_width = camera_width
+        self.camera_height = camera_height
+        self.jpeg_quality = jpeg_quality
         self.done = threading.Event()
 
     def close(self) -> None:
@@ -174,8 +184,8 @@ class CameraInferenceWorker(threading.Thread):
         import cv2  # lazy dependency: UI can run on PC without OpenCV.
         while not self.done.is_set():
             cam = cv2.VideoCapture(self.camera_index)
-            cam.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+            cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
+            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
             cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.runtime.set_camera_state(cam.isOpened(), False)
             try:
@@ -190,13 +200,16 @@ class CameraInferenceWorker(threading.Thread):
                         ok, frame = cam.read()
                         if not ok:
                             raise RuntimeError("camera frame unavailable")
-                        ok, compressed = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                        ok, compressed = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
                         if not ok:
                             raise RuntimeError("JPEG encode failed")
                         send_message(sock, compressed.tobytes())
                         result = DetectionResult.from_dict(recv_json(sock))
                         rtt_ms = (time.monotonic() - started) * 1000.0
                         self.runtime.process_detection(result, rtt_ms)
+                        publish = getattr(self.runtime, "publish_preview", None)
+                        if callable(publish):
+                            publish(frame, result)
             except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
                 with self.runtime._guard:
                     self.runtime._last_event = "PC_LINK_ERROR_" + type(exc).__name__
@@ -272,6 +285,14 @@ class OperatorHandler(BaseHTTPRequestHandler):
             return self.respond(200, (ASSETS / "operator_console.js").read_bytes(), "application/javascript; charset=utf-8")
         if path == "/ui.css":
             return self.respond(200, (ASSETS / "operator_console.css").read_bytes(), "text/css; charset=utf-8")
+        if path == "/api/preview.jpg":
+            if not self.authenticated():
+                return self.json(401, {"error": "UNAUTHORIZED"})
+            preview = getattr(self.server.runtime, "get_preview", None)
+            if not callable(preview):
+                return self.json(404, {"error": "PREVIEW_UNAVAILABLE"})
+            image = preview()
+            return self.respond(200, image, "image/jpeg") if image else self.json(404, {"error": "NO_CAMERA_FRAME"})
         if path == "/api/status":
             if not self.authenticated():
                 return self.json(401, {"error": "UNAUTHORIZED"})
