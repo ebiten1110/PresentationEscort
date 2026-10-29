@@ -24,7 +24,15 @@ class PresenterLock:
     MAX_FRAME_AGE_S = 0.50
     CONFIDENCE_MIN = 0.45
 
-    def __init__(self) -> None:
+    def __init__(self, *, auto_select_single: bool = False,
+                 transient_recovery_s: float = 0.0) -> None:
+        if not 0.0 <= transient_recovery_s <= 2.0:
+            raise ValueError("invalid transient recovery window")
+        self.auto_select_single = bool(auto_select_single)
+        self.transient_recovery_s = transient_recovery_s
+        self._single_candidate_streak = 0
+        self._candidate_last: Optional[PersonBox] = None
+        self._recovery_deadline: Optional[float] = None
         self._last_seq = 0
         self._frame_time: Optional[float] = None
         self._frame_size: Optional[tuple[int, int]] = None
@@ -42,6 +50,9 @@ class PresenterLock:
         self._frame_size = None
         self.candidates = []
         self._history.clear()
+        self._single_candidate_streak = 0
+        self._candidate_last = None
+        self._recovery_deadline = None
         self.clear("PC_STREAM_DISCONNECTED")
 
     def clear(self, reason: str = "OPERATOR_SELECTION_REQUIRED") -> None:
@@ -49,12 +60,16 @@ class PresenterLock:
         self.locked = False
         self.state = "UNLOCKED"
         self.reason = reason
+        self._recovery_deadline = None
+        self._single_candidate_streak = 0
 
     def _lose(self, reason: str) -> None:
         self._locked = None
         self.locked = False
         self.state = "LOST"
         self.reason = reason
+        self._recovery_deadline = None
+        self._single_candidate_streak = 0
 
     def observe(self, detection: DetectionResult, *, now: float) -> DetectionResult:
         """Process complete V2 frames; output only a human-locked person."""
@@ -118,7 +133,28 @@ class PresenterLock:
             if now - item[0] <= self.MAX_FRAME_AGE_S
         }
         if not self.locked or self._locked is None:
-            return suppressed
+            if self.auto_select_single and len(candidates) == 1:
+                candidate = candidates[0]
+                previous = self._candidate_last
+                near = (previous is not None and
+                        abs(candidate.cx - previous.cx) <= max(15, previous.width * .25)
+                        and abs(candidate.cy - previous.cy) <= max(15, previous.height * .20)
+                        and .75 <= candidate.width / previous.width <= 1.35)
+                self._single_candidate_streak = self._single_candidate_streak + 1 if near else 1
+                self._candidate_last = candidate
+                if self._single_candidate_streak >= 4 and self.state != "LOST":
+                    # Select a single stable candidate for UI convenience.
+                    # Never ARM motors; AUTO remains operator-authorized.
+                    self._locked = candidate
+                    self.locked = True
+                    self.state = "TRACKING"
+                    self.reason = "SINGLE_STABLE_CANDIDATE_AUTO_SELECTED"
+                else:
+                    return suppressed
+            else:
+                self._single_candidate_streak = 0
+                self._candidate_last = None
+                return suppressed
 
         original = self._locked
         allowed: list[PersonBox] = []
@@ -132,6 +168,15 @@ class PresenterLock:
             ):
                 allowed.append(box)
         if len(allowed) != 1:
+            if self.transient_recovery_s > 0 and len(candidates) == 0:
+                if self._recovery_deadline is None:
+                    self._recovery_deadline = now + self.transient_recovery_s
+                if now <= self._recovery_deadline:
+                    # No target is reported to the motion gate: the robot
+                    # STOPs, but the geometrical hint survives briefly.
+                    self.state = "TEMPORARILY_LOST"
+                    self.reason = "WAIT_SAME_PERSON_REAPPEAR"
+                    return suppressed
             self._lose("TARGET_MISSING_OR_MULTIPLE_MATCHES")
             return suppressed
         chosen = allowed[0]
@@ -140,6 +185,7 @@ class PresenterLock:
         if self._near_another(chosen, candidates):
             self._lose("AMBIGUOUS_NEARBY_PERSON")
             return suppressed
+        self._recovery_deadline = None
         self._locked = chosen
         self.state = "TRACKING"
         self.reason = "LOCKED_GEOMETRY_ONLY"
@@ -194,6 +240,7 @@ class PresenterLock:
         self._locked = matches[0]
         self.locked = True
         self.state = "SELECTED_WAIT_NEXT_FRAME"
+        self._recovery_deadline = None
         self.reason = "LOCK_SELECTED_NEEDS_FRESH_FRAMES"
         return True, "SELECTED"
 
@@ -206,11 +253,21 @@ class PresenterLock:
         return {
             "lock_state": self.state if recent else "NO_FRESH_FRAME",
             "lock_reason": self.reason,
-            "presenter_selected": self.locked and recent,
+            "presenter_selected": self.locked and recent and self.state == "TRACKING",
+            "selected_index": next(
+                (i for i, box in enumerate(self.candidates)
+                 if self.locked and self._locked is not None
+                 and box is self._locked), None
+            ),
             "frame_seq": self._last_seq if recent else 0,
             "candidate_count": len(self.candidates) if recent else 0,
             "candidates": [
-                {"index": i, "x_percent": round(box.cx / fw * 100),
+                {"index": i,
+                 "x1_percent": round(box.x1 / fw * 100, 2),
+                 "y1_percent": round(box.y1 / fh * 100, 2),
+                 "x2_percent": round(box.x2 / fw * 100, 2),
+                 "y2_percent": round(box.y2 / fh * 100, 2),
+                 "x_percent": round(box.cx / fw * 100),
                  "y_percent": round(box.cy / fh * 100),
                  "confidence": round(box.confidence, 2)}
                 for i, box in enumerate(self.candidates)
