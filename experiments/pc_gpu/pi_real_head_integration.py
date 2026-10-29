@@ -218,6 +218,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self.invert_horizontal = invert_horizontal
         self._preview_jpeg: Optional[bytes] = None
         self._preview_resolution: Optional[str] = None
+        self.turn_edge_fraction = turn_edge_fraction
+        self._last_camera_aim: Optional[tuple[int, int]] = None
+        self._last_camera_aim_at = 0.0
         # Superclass has not started any threads or issued any commands.
         self.sink.close()
         self.sink = HeadOnlySerialSink(
@@ -250,37 +253,78 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self._led_sent_at = 0.0
 
     def publish_preview(self, frame, detection) -> None:
-        """Draw locally selected presenter vs other detections in the camera view."""
+        """Render a target-to-center vector, action zone and last seen bearing."""
         import cv2
+        now = time.monotonic()
         with self._guard:
-            view = self.presenter.display(now=time.monotonic())
+            view = self.presenter.display(now=now)
             selected = view.get("selected_index") if view["lock_state"] == "TRACKING" else None
             boxes = list(self.presenter.candidates)
             state = view["lock_state"]
+            follow = getattr(self, "_last_cycle", None)
+            last_aim = getattr(self, "_last_camera_aim", None)
+            last_seen_at = getattr(self, "_last_camera_aim_at", 0.)
         img = frame.copy()
         height, width = img.shape[:2]
-        # This frame is not a person ID: color indicates the operator's
-        # continuity-selected target, not biometrics/re-identification.
+        cx, cy = width // 2, height // 2
+        # Visible boundary for preferring small head motions over body turns.
+        turn_threshold_px = int(width * self.turn_edge_fraction)
+        left = max(0, cx - turn_threshold_px)
+        right = min(width - 1, cx + turn_threshold_px)
+        cv2.line(img, (left, 0), (left, height), (130, 140, 160), 1, cv2.LINE_AA)
+        cv2.line(img, (right, 0), (right, height), (130, 140, 160), 1, cv2.LINE_AA)
+        cv2.circle(img, (cx, cy), 20, (245, 245, 245), 2, cv2.LINE_AA)
+        cv2.line(img, (cx-24, cy), (cx+24, cy), (245, 245, 245), 2)
+        cv2.line(img, (cx, cy-24), (cx, cy+24), (245, 245, 245), 2)
+        cv2.putText(img, "CAMERA CENTER", (max(2, cx-72), min(height-4, cy+38)),
+                    cv2.FONT_HERSHEY_SIMPLEX, .46, (245,245,245), 1, cv2.LINE_AA)
         for idx, box in enumerate(boxes):
             active = idx == selected
             gesturing = idx in detection.gesture_indices
-            color = (76, 220, 100) if active else ((0, 220, 255) if gesturing else (150, 156, 170))
+            color = (80, 222, 102) if active else ((0, 220, 255) if gesturing else (140, 146, 165))
             cv2.rectangle(img, (box.x1, box.y1), (box.x2, box.y2), color, 3 if active else 1)
-            label = ("LOCKED" if active else "HANDS UP" if gesturing else "OTHER") + f" {idx+1} {box.confidence:.0%}"
-            cv2.putText(img, label, (max(0, box.x1), max(19, box.y1 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, .54, color, 2, cv2.LINE_AA)
-        if selected is not None and selected < len(detection.aim_points):
-            aim = detection.aim_points[selected]
-            if type(aim.get("x")) is int and type(aim.get("y")) is int:
-                cv2.circle(img, (aim["x"], aim["y"]), 7, (50, 180, 255), 2, cv2.LINE_AA)
-                cv2.putText(img, "FACE/AIM", (max(0, aim["x"]-30), max(18, aim["y"]-14)),
-                            cv2.FONT_HERSHEY_SIMPLEX, .42, (50, 180, 255), 1, cv2.LINE_AA)
-        cx, cy = width // 2, height // 2
-        cv2.line(img, (cx - 13, cy), (cx + 13, cy), (240, 245, 250), 1)
-        cv2.line(img, (cx, cy - 13), (cx, cy + 13), (240, 245, 250), 1)
-        cv2.putText(img, state, (10, height - 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, .52, (235, 240, 255), 2, cv2.LINE_AA)
-        ok, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 72])
+            label = ("LOCKED" if active else "HANDS UP" if gesturing else "OTHER") + f" {idx+1}"
+            cv2.putText(img, label, (max(1, box.x1), max(18, box.y1-8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, .55, color, 2, cv2.LINE_AA)
+        if selected is not None and 0 <= selected < len(boxes):
+            box = boxes[selected]
+            aim_x = round(box.cx)
+            aim_y = round(box.y1 + .22 * box.height)
+            source = "UPPER BODY"
+            if selected < len(detection.aim_points):
+                aim = detection.aim_points[selected]
+                if (type(aim.get("x")) is int and type(aim.get("y")) is int
+                        and box.x1 <= aim["x"] <= box.x2
+                        and box.y1 <= aim["y"] <= box.y2):
+                    aim_x, aim_y = aim["x"], aim["y"]
+                    source = str(aim.get("source", "FACE")).upper()
+            dx, dy = aim_x - cx, aim_y - cy
+            with self._guard:
+                self._last_camera_aim = (aim_x, aim_y)
+                self._last_camera_aim_at = now
+            cv2.circle(img, (aim_x, aim_y), 9, (25, 172, 255), 3, cv2.LINE_AA)
+            cv2.arrowedLine(img, (aim_x, aim_y), (cx, cy),
+                            (35, 185, 255), 2, cv2.LINE_AA, tipLength=.09)
+            zone = "BODY TURN" if abs(dx) >= turn_threshold_px else "HEAD YAW"
+            if abs(dx) < width*.035 and abs(dy) < height*.06:
+                zone = "CENTERED"
+            if follow is not None and follow.body_sent:
+                zone = "BODY TURN SENT"
+            heading = f"{zone}  {source}  dx:{dx:+d}px  dy:{dy:+d}px"
+        elif state in ("LOST", "TEMPORARILY_LOST") and last_aim is not None and now-last_seen_at < 3.:
+            lx, ly = last_aim
+            direction = "RIGHT" if lx > cx else "LEFT" if lx < cx else "CENTER"
+            heading = f"TARGET LOST / STOP - LAST SEEN {direction}"
+            cv2.circle(img, (lx, ly), 13, (40, 65, 250), 2, cv2.LINE_AA)
+        else:
+            heading = "WAIT: HANDS OVER HEAD / NO TARGET"
+        # Always annotate the decision at the top of the camera image.
+        strip = img.copy()
+        cv2.rectangle(strip, (0, 0), (width, 33), (12, 19, 31), -1)
+        cv2.addWeighted(strip, .70, img, .30, 0, img)
+        cv2.putText(img, heading, (9, 22), cv2.FONT_HERSHEY_SIMPLEX,
+                    max(.35, min(.58, width / 1200.)), (235,245,255), 2, cv2.LINE_AA)
+        ok, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 78])
         if ok:
             with self._guard:
                 self._preview_jpeg = encoded.tobytes()
