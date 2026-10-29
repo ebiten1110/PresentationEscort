@@ -74,11 +74,15 @@ def detection_to_person_target(
     top = cy - bh / 2.0
     aim_y = round(top + aim_height_fraction * bh)
     aim_y = max(0, min(fh - 1, aim_y))
+    aim_x = cx
+    if (type(detection.aim_x) is int and type(detection.aim_y) is int
+            and 0 <= detection.aim_x < fw and 0 <= detection.aim_y < fh):
+        aim_x, aim_y = detection.aim_x, detection.aim_y
 
     return PersonTarget(
-        center_x=cx,
+        center_x=aim_x,
         aim_y=aim_y,
-        error_x=cx - (fw // 2 + center_offset_x),
+        error_x=aim_x - (fw // 2 + center_offset_x),
         error_y=aim_y - (fh // 2 + center_offset_y),
         box_width=bw,
         box_height=bh,
