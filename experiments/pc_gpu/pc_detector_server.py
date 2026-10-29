@@ -12,6 +12,7 @@ from ultralytics import YOLO
 
 from detection_protocol import DetectionResult, recv_message, send_json
 from person_tracker import PersonBox, PersonTracker
+from gesture_pose import both_hands_over_head, face_or_upper_body_aim
 
 
 @dataclass
@@ -25,10 +26,12 @@ class ServerConfig:
 
 
 class PersonDetector:
-    def __init__(self, config: ServerConfig) -> None:
+    def __init__(self, config: ServerConfig, *, gesture_pose_model: Optional[str] = None) -> None:
         self.config = config
-        print(f"[Model] loading {config.model} device={config.device}")
-        self.model = YOLO(config.model)
+        self.gesture_pose_model = gesture_pose_model
+        model_name = gesture_pose_model or config.model
+        print(f"[Model] loading {model_name} device={config.device}")
+        self.model = YOLO(model_name)
         self.last_finish_time: Optional[float] = None
         self.tracker = PersonTracker(min_confidence=config.confidence)
         self.frame_seq = 0
@@ -63,6 +66,7 @@ class PersonDetector:
         self.last_finish_time = now
 
         candidates: list[PersonBox] = []
+        pose_points: list[list[list[float]]] = []
         if results:
             detected_boxes = results[0].boxes
             if detected_boxes is not None:
@@ -80,6 +84,11 @@ class PersonDetector:
                             confidence=float(detected_boxes.conf[idx].item()),
                         )
                     )
+                    if self.gesture_pose_model and results[0].keypoints is not None:
+                        points = results[0].keypoints.data[idx].tolist()
+                        pose_points.append(points)
+                    else:
+                        pose_points.append([])
 
         # Protocol V2 transfers every valid person candidate. The Pi makes
         # the final operator-confirmed association; confidence MUST NOT
@@ -92,11 +101,24 @@ class PersonDetector:
             for box in candidates
             if box.valid(frame_width, frame_height, self.config.confidence)
         ]
+        gestures: list[int] = []
+        aims: list[dict] = []
+        if self.gesture_pose_model:
+            filtered = [(box, pose_points[i]) for i, box in enumerate(candidates)
+                        if box.valid(frame_width, frame_height, self.config.confidence)]
+            for person_index, (box, points) in enumerate(filtered):
+                if both_hands_over_head(points):
+                    gestures.append(person_index)
+                x, y, source = face_or_upper_body_aim(
+                    points, (box.x1, box.y1, box.x2, box.y2))
+                aims.append({"x": x, "y": y, "source": source})
         selected = self.tracker.select(candidates, frame_width, frame_height)
         common = dict(
             protocol_version=2,
             frame_seq=self.frame_seq,
             people=people,
+            gesture_indices=gestures,
+            aim_points=aims,
             frame_width=frame_width,
             frame_height=frame_height,
             inference_ms=inference_ms,
