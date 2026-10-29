@@ -20,6 +20,8 @@
       <button id="connect">接続</button>
     </section>
     <section class="status-strip">
+      <div class="led-status"><small>状態ランプ（実機の電気的検出ではない）</small>
+        <strong><span id="led-dot" class="led-dot red"></span><span id="led-label">赤・停止</span></strong></div>
       <div><small>モード</small><strong id="mode">未接続</strong></div>
       <div><small>対象検出</small><strong id="person">—</strong></div>
       <div><small>発表者ロック</small><strong id="lock-state">—</strong></div>
@@ -28,7 +30,7 @@
     </section>
     <section class="workspace">
       <section class="camera-pane">
-        <div class="pane-heading"><h2>カメラ・人物選択</h2><span><span id="camera-resolution">—</span> · 緑：選択中 / 灰：その他</span></div>
+        <div class="pane-heading"><h2>カメラ・中心合わせ</h2><span><span id="camera-resolution">—</span> · 緑：選択中 / 灰：その他</span></div>
         <div class="video-frame" id="video-frame">
           <img id="camera-preview" alt="カメラ映像・人物検出" draggable="false">
           <div id="video-placeholder">カメラ映像の接続待ち</div>
@@ -37,7 +39,7 @@
           <div id="candidates"></div>
           <button id="release-target" class="quiet" disabled>選択解除</button>
         </div>
-        <p id="lock-message" class="small-text">両手を頭より上に挙げて保持 → 対象を選択。手動で映像をクリックしても選べます。</p>
+        <p id="lock-message" class="small-text">顔の橙丸から中央の白丸へ矢印が出ます。中央付近＝首、それより外側＝本体旋回を準備。完全に見失ったら停止します。</p>
       </section>
       <section class="control-pane">
         <div class="pane-heading"><h2>追従コントロール</h2></div>
