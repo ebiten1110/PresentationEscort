@@ -16,6 +16,7 @@ import time
 from dataclasses import replace
 from typing import Optional
 
+from diagnostic_capture import DiagnosticCapture
 from esp32_feedback_poller import Esp32FeedbackPoller
 from motion_gateway import PiMotionGateway
 from safety_manager import ControlDecision
@@ -418,7 +419,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  turn_settle_seconds: float = 1.0,
                  turn_edge_fraction: float = .15,
                  invert_horizontal: bool = False,
-                 head_speed_deg_s: float = 2.0) -> None:
+                 head_speed_deg_s: float = 2.0,
+                 capture_diagnostics: bool = False) -> None:
         if body_enabled and not head_enabled:
             raise ValueError("body turns require head control opt-in")
         super().__init__()
@@ -433,7 +435,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self.invert_horizontal = invert_horizontal
         self.head_speed_deg_s = head_speed_deg_s
         self._preview_jpeg: Optional[bytes] = None
+        self._preview_at: Optional[float] = None
         self._preview_resolution: Optional[str] = None
+        self._diagnostics = DiagnosticCapture() if capture_diagnostics else None
         self._last_detection_at: Optional[float] = None
         self._camera_interval_s: Optional[float] = None
         self.turn_edge_fraction = turn_edge_fraction
@@ -602,9 +606,13 @@ class LockedRealRuntime(LockedSimulationRuntime):
                     max(.35, min(.58, width / 1200.)), (235,245,255), 2, cv2.LINE_AA)
         ok, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 78])
         if ok:
+            jpeg = encoded.tobytes()
             with self._guard:
-                self._preview_jpeg = encoded.tobytes()
+                self._preview_jpeg = jpeg
+                self._preview_at = now
                 self._preview_resolution = f"{width}x{height}"
+            if self._diagnostics is not None:
+                self._diagnostics.frame(jpeg, at=now)
 
     def get_preview(self) -> Optional[bytes]:
         with self._guard:
@@ -617,6 +625,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self._last_detection_at = None
                 self._camera_interval_s = None
                 self._preview_jpeg = None
+                self._preview_at = None
                 self._preview_resolution = None
                 # New PC connection must not inherit old operator gesture
                 # authorization. An operator must re-enable standby.
@@ -710,6 +719,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 if follow is not None else None
             )
             status["camera_resolution"] = self._preview_resolution
+            status["preview_available"] = self._preview_jpeg is not None
+            status["preview_age_ms"] = (
+                round((time.monotonic() - self._preview_at) * 1000)
+                if self._preview_at is not None else None)
+            status["diagnostic_capture_enabled"] = self._diagnostics is not None
             status["camera_effective_fps"] = (
                 round(1.0 / self._camera_interval_s, 1)
                 if self._camera_interval_s is not None and self._camera_interval_s > 0
@@ -834,6 +848,48 @@ class LockedRealRuntime(LockedSimulationRuntime):
                     result = self.action("auto")
                     self._last_event = ("GESTURE_AUTO_ARM_REQUESTED" if result.get("ok")
                                         else "GESTURE_ARM_BLOCKED_" + str(result.get("error")))
+            if self._diagnostics is not None:
+                state = self.status()
+                self._diagnostics.event({
+                    "type": "inference_cycle",
+                    "frame_seq": detection.frame_seq,
+                    "protocol_version": detection.protocol_version,
+                    "size": [detection.frame_width, detection.frame_height],
+                    "gpu_inference_ms": detection.inference_ms,
+                    "pi_roundtrip_ms": rtt_ms,
+                    "person_found": detection.found,
+                    "person_candidates": (detection.people or [])[:12],
+                    "gesture_indices": (detection.gesture_indices or [])[:12],
+                    "aim_points": (detection.aim_points or [])[:12],
+                    "aim_source": detection.aim_source,
+                    "pc_error": detection.error,
+                    "presenter": {key: state.get(key) for key in (
+                        "lock_state", "lock_reason", "selected_index", "presenter_selected")},
+                    "safety": {key: state.get(key) for key in (
+                        "mode", "reason", "fw_safety", "stop_reason", "fault_cause",
+                        "uart_last_safety_event", "uart_poll_error")},
+                    "head_feedback": state.get("esp32_head_feedback"),
+                    "follow": state.get("follow_debug"),
+                })
+
+    def get_diagnostic_bundle(self) -> Optional[bytes]:
+        """Authenticated download only; never opens a port or sends motion."""
+        if self._diagnostics is None:
+            return None
+        with self._guard:
+            state = self.status()
+            public_keys = (
+                "mode", "reason", "fw_safety", "stop_reason", "fault_cause",
+                "uart_last_safety_event", "uart_poll_error", "transport_fault",
+                "camera_active", "pc_connected", "camera_resolution",
+                "preview_available", "preview_age_ms", "camera_effective_fps",
+                "inference_ms", "rtt_ms", "lock_state", "lock_reason",
+                "presenter_selected", "gesture_control_enabled",
+                "esp32_head_feedback", "esp32_walking_feedback", "follow_debug",
+                "search_state", "head_speed_limit_deg_s", "pitch_tracking_enabled",
+            )
+            snapshot = {key: state.get(key) for key in public_keys}
+        return self._diagnostics.export(status=snapshot)
 
     def action(self, action: str) -> dict:
         with self._guard:
@@ -901,6 +957,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--camera-height", type=int, default=480)
     ap.add_argument("--camera-fps", type=int, default=30,
                     help="Requested camera capture FPS (5..60); actual rate may be lower")
+    ap.add_argument("--capture-diagnostics", action="store_true",
+                    help="Opt in to bounded RAM image+decision capture and authenticated ZIP download")
     ap.add_argument("--jpeg-quality", type=int, default=80)
     ap.add_argument("--port", type=int, default=8766)
     power_group = ap.add_mutually_exclusive_group(required=True)
@@ -980,6 +1038,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         turn_edge_fraction=args.turn_edge_fraction,
         invert_horizontal=args.reverse_horizontal_direction,
         head_speed_deg_s=args.head_speed_deg_per_second,
+        capture_diagnostics=args.capture_diagnostics,
     )
     worker = None
     server = None

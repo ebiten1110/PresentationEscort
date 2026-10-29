@@ -58,6 +58,10 @@
           <div><small>ESP32応答</small><strong id="fw-arm-status">—</strong></div>
           <div><small>異常</small><strong id="fault-cause">なし</strong></div>
         </div>
+          <div class="diagnostic-export">
+            <button id="download-diagnostics" class="quiet" disabled>診断データを保存（画像＋判定 ZIP）</button>
+            <span id="diagnostic-export-note" class="small-text">取得するには診断記録を有効にして起動してください。人物画像を含みます。</span>
+          </div>
         <details class="advanced">
           <summary>詳細診断・手動操作（開発者向け）</summary>
           <dl>
@@ -66,6 +70,7 @@
             <div><dt>最終イベント</dt><dd id="event">—</dd></div>
             <div><dt>発表者判定</dt><dd id="lock-reason">—</dd></div>
             <div><dt>ESP32内部角度</dt><dd id="esp32-head-feedback">—</dd></div>
+            <div><dt>カメラプレビュー</dt><dd id="preview-status">—</dd></div>
             <div><dt>本体 / Busy</dt><dd id="esp32-walking-feedback">—</dd></div>
             <div><dt>PWM診断</dt><dd id="esp32-servo-diagnostic">—</dd></div>
             <div><dt>追従計画</dt><dd id="follow-debug">—</dd></div>

@@ -257,7 +257,10 @@ class OperatorHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+        # The authenticated preview uses URL.createObjectURL(JPEG blob).
+        # Without this narrowly scoped img-src exception, the browser shows
+        # a broken-image icon despite a successful /api/preview.jpg response.
+        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -301,6 +304,15 @@ class OperatorHandler(BaseHTTPRequestHandler):
                 return self.json(404, {"error": "PREVIEW_UNAVAILABLE"})
             image = preview()
             return self.respond(200, image, "image/jpeg") if image else self.json(404, {"error": "NO_CAMERA_FRAME"})
+        if path == "/api/diagnostics.zip":
+            if not self.authenticated():
+                return self.json(401, {"error": "UNAUTHORIZED"})
+            exporter = getattr(self.server.runtime, "get_diagnostic_bundle", None)
+            if not callable(exporter):
+                return self.json(404, {"error": "DIAGNOSTICS_DISABLED"})
+            data = exporter()
+            return (self.respond(200, data, "application/zip") if data is not None
+                    else self.json(404, {"error": "DIAGNOSTICS_DISABLED"}))
         if path == "/api/status":
             if not self.authenticated():
                 return self.json(401, {"error": "UNAUTHORIZED"})

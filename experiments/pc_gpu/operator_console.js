@@ -86,12 +86,19 @@
         const img = byId("camera-preview");
         img.src = nextUrl;
         byId("video-frame").classList.add("has-preview");
-        if (previous) URL.revokeObjectURL(previous);
+        // Image loading is asynchronous. Revoking the old blob immediately
+        // can make a pending image decode look like an empty camera feed.
+        if (previous) window.setTimeout(() => URL.revokeObjectURL(previous), 1200);
       } else if (response.status === 404) {
         byId("video-frame").classList.remove("has-preview");
+        byId("video-placeholder").textContent = "映像データを待機中（Piのカメラ・描画を確認）";
+      } else {
+        byId("video-frame").classList.remove("has-preview");
+        byId("video-placeholder").textContent = "映像取得エラー：HTTP " + response.status;
       }
-    } catch (_) {
+    } catch (err) {
       byId("video-frame").classList.remove("has-preview");
+      byId("video-placeholder").textContent = "映像通信エラー：" + err.message;
     } finally {
       previewBusy = false;
     }
@@ -116,7 +123,9 @@
       !status.presenter_selected || status.mode !== "SAFE";
     if (!candidates.length) {
       const empty = document.createElement("span");
-      empty.textContent = "人物候補なし／PCが旧版の可能性があります";
+      empty.textContent = status.preview_available === false
+        ? "カメラプレビュー未取得。接続・診断を確認してください。"
+        : "人物候補なし（映像に人物がいるか確認してください）";
       area.appendChild(empty);
       return;
     }
@@ -160,6 +169,10 @@
       byId("pc").textContent = status.pc_connected ? "接続中" : "未接続";
       byId("person").textContent = status.target_found ? "検出あり" : "検出なし";
       byId("rtt").textContent = status.rtt_ms == null ? "—" : status.rtt_ms + " ms";
+      byId("download-diagnostics").disabled = status.diagnostic_capture_enabled !== true;
+      byId("diagnostic-export-note").textContent = status.diagnostic_capture_enabled
+        ? "最近の画像と判定のみ。人の顔が映るためZIPは非公開で共有してください。"
+        : "起動時に --capture-diagnostics を指定すると保存できます。";
       byId("fw").textContent = status.fw_safety;
       const simulated = status.simulation !== false;
       const headOnly = !simulated && status.head_only_test === true;
@@ -183,6 +196,9 @@
         ? (head.fresh ? "Yaw " + fmt(head.yaw_deg) + "° / Pitch " +
            fmt(head.pitch_deg) + "°（ESP32内部値）" : "テレメトリ未受信・期限切れ")
         : "未対応";
+      byId("preview-status").textContent = status.preview_available === false
+        ? "Piから未生成" : status.preview_age_ms == null
+          ? "取得状態不明" : "画像生成から " + status.preview_age_ms + " ms";
       byId("esp32-servo-diagnostic").textContent =
         status.uart_last_servo_diagnostic ||
         "未報告（診断対応ESP32ファーム未導入／首PWM未出力の可能性）";
@@ -292,6 +308,33 @@
   byId("gesture-on").addEventListener("click", () => act("gesture_on"));
   byId("gesture-off").addEventListener("click", () => act("gesture_off"));
   byId("release-target").addEventListener("click", () => targetAction({release: true}));
+  byId("download-diagnostics").addEventListener("click", async () => {
+    const button = byId("download-diagnostics");
+    button.disabled = true;
+    byId("diagnostic-export-note").textContent = "診断ZIPを準備しています…";
+    try {
+      const response = await fetch("/api/diagnostics.zip", {
+        cache: "no-store", credentials: "omit",
+        headers: {"Authorization": "Bearer " + token}
+      });
+      if (!response.ok) throw Error("HTTP " + response.status);
+      const archive = await response.blob();
+      const url = URL.createObjectURL(archive);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "PresentationEscort-diagnostics.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+      byId("diagnostic-export-note").textContent =
+        "保存しました。画像が含まれるので、確認相手にだけ送ってください。";
+    } catch (err) {
+      byId("diagnostic-export-note").textContent = "保存失敗: " + err.message;
+    } finally {
+      button.disabled = !lastStatus?.diagnostic_capture_enabled;
+    }
+  });
   byId("connect").addEventListener("click", async () => {
     const supplied = byId("token").value.trim();
     if (!supplied) return;

@@ -68,6 +68,12 @@ class OperatorConsoleTests(unittest.TestCase):
         self.assertIn(b'id="motor"', body)
         self.assertEqual(hdr["Cache-Control"], "no-store")
         self.assertIn("default-src 'none'", hdr["Content-Security-Policy"])
+        self.assertIn("img-src 'self' blob:", hdr["Content-Security-Policy"])
+        self.assertNotIn("unsafe-inline", hdr["Content-Security-Policy"])
+
+    def test_diagnostic_download_requires_auth_and_is_off_by_default(self):
+        self.assertEqual(self.request("GET", "/api/diagnostics.zip")[0], 401)
+        self.assertEqual(self.request("GET", "/api/diagnostics.zip", token=self.token)[0], 404)
 
     def test_api_status_denied_without_token(self):
         self.assertEqual(self.request("GET", "/api/status")[0], 401)
