@@ -37,6 +37,7 @@ class PresenterLock:
         self.gesture_event_id = 0
         self._gesture_candidate: Optional[PersonBox] = None
         self._gesture_streak = 0
+        self._needs_resume_gesture = False
         self.auto_select_single = bool(auto_select_single)
         self.transient_recovery_s = transient_recovery_s
         self._single_candidate_streak = 0
@@ -61,6 +62,7 @@ class PresenterLock:
         self._history.clear()
         self._gesture_candidate = None
         self._gesture_streak = 0
+        self._needs_resume_gesture = False
         self._single_candidate_streak = 0
         self._candidate_last = None
         self._recovery_deadline = None
@@ -72,6 +74,7 @@ class PresenterLock:
         self._gesture_streak = 0
         self.locked = False
         self.state = "UNLOCKED"
+        self._needs_resume_gesture = False
         self.reason = reason
         self._recovery_deadline = None
         self._single_candidate_streak = 0
@@ -82,6 +85,7 @@ class PresenterLock:
         self._gesture_streak = 0
         self.locked = False
         self.state = "LOST"
+        self._needs_resume_gesture = False
         self.reason = reason
         self._recovery_deadline = None
         self._single_candidate_streak = 0
@@ -217,6 +221,8 @@ class PresenterLock:
                     # No target is reported to the motion gate: the robot
                     # STOPs, but the geometrical hint survives briefly.
                     self.state = "TEMPORARILY_LOST"
+                    self._needs_resume_gesture = self.gesture_enabled
+                    self._gesture_streak = 0
                     self.reason = "WAIT_SAME_PERSON_REAPPEAR"
                     return suppressed
             self._lose("TARGET_MISSING_OR_MULTIPLE_MATCHES")
@@ -232,6 +238,18 @@ class PresenterLock:
         self.state = "TRACKING"
         self.reason = "LOCKED_GEOMETRY_ONLY"
         chosen_index = next((i for i, box in enumerate(candidates) if box is chosen), -1)
+        if self._needs_resume_gesture:
+            raised = (isinstance(detection.gesture_indices, list) and
+                      chosen_index in detection.gesture_indices and
+                      len(detection.gesture_indices) == 1)
+            self._gesture_streak = self._gesture_streak + 1 if raised else 0
+            if self._gesture_streak >= self.gesture_confirm_frames:
+                # After a dropout, only a fresh sustained explicit gesture
+                # can request a new ARM attempt; mere reappearance cannot.
+                self.gesture_event_id += 1
+                self._needs_resume_gesture = False
+                self._gesture_streak = 0
+                self.reason = "GESTURE_RESTART_REQUESTED"
         face_x = round(chosen.cx)
         face_y = round(chosen.cy)
         aim_source = ""
