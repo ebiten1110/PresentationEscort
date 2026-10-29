@@ -145,9 +145,14 @@ class BackupTests(unittest.TestCase):
             make_backup(self.repo, self.repo / "accidental-backups")
 
     def test_backup_does_not_override_existing_snapshot(self):
-        created = make_backup(self.repo, self.dest)
-        with self.assertRaises(FileExistsError):
-            make_backup(self.repo, self.dest)
+        # Freeze the timestamp so this tests the *same* snapshot path even
+        # when two Git archive operations straddle a UTC second boundary.
+        from unittest.mock import patch
+        with patch("phase10_release.datetime") as clock:
+            clock.now.return_value.strftime.return_value = "20261029T000000Z"
+            created = make_backup(self.repo, self.dest)
+            with self.assertRaises(FileExistsError):
+                make_backup(self.repo, self.dest)
         self.assertTrue(verify_backup(created)["verified"])
 
     def test_checkout_not_on_baseline_history_is_rejected(self):
