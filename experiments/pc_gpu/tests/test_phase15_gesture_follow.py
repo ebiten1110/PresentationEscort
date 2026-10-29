@@ -161,6 +161,29 @@ class GestureAutoRuntimeTests(unittest.TestCase):
         wait_for(lambda: self.runtime.status()["mode"] == "AUTO")
         self.assertEqual(self.uart.commands.count("SAFETY_ARM"), 2)
 
+    def test_brief_loss_requires_new_gesture_not_reappearance(self):
+        self.assertTrue(self.runtime.action("gesture_on")["ok"])
+        for i in range(1, 10):
+            self.runtime.process_detection(frame(i), 55.)
+        wait_for(lambda: self.runtime.status()["mode"] == "AUTO")
+        self.runtime.process_detection(frame(10, visible=False), 55.)
+        self.assertEqual(self.runtime.status()["mode"], "SAFE")
+        for i in range(11, 16):
+            self.runtime.process_detection(frame(i, hands=False), 55.)
+        self.assertEqual(self.runtime.status()["lock_state"], "TRACKING")
+        self.assertEqual(self.runtime.status()["mode"], "SAFE")
+        self.assertEqual(self.uart.commands.count("SAFETY_ARM"), 1)
+        for i in range(16, 26):
+            self.runtime.process_detection(frame(i, hands=True), 55.)
+        wait_for(lambda: self.runtime.status()["mode"] == "AUTO")
+        self.assertEqual(self.uart.commands.count("SAFETY_ARM"), 2)
+
+    def test_disconnect_clears_gesture_standby(self):
+        self.assertTrue(self.runtime.action("gesture_on")["ok"])
+        self.runtime.set_camera_state(False, False)
+        self.assertFalse(self.runtime.status()["gesture_control_enabled"])
+        self.assertNotIn("SAFETY_ARM", self.uart.commands)
+
     def test_horizontal_direction_inverted_from_legacy(self):
         target = detection_to_person_target(DetectionResult(
             found=True, class_id=0, class_name="person", confidence=.90,
