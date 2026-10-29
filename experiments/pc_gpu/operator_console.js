@@ -142,6 +142,7 @@
     try {
       const status = await call("/api/status");
       lastStatus = status;
+      byId("camera-resolution").textContent = status.camera_resolution || "映像待機";
       currentMode = status.mode;
       byId("mode").textContent = status.mode;
       byId("pc").textContent = status.pc_connected ? "接続中" : "未接続";
