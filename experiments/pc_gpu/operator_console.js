@@ -146,6 +146,15 @@
       byId("camera-resolution").textContent = status.camera_resolution || "映像待機";
       currentMode = status.mode;
       byId("mode").textContent = status.mode;
+      const led = status.led_indicated_color || (
+        status.mode === "AUTO" ? "WHITE" :
+        status.gesture_control_enabled ? "YELLOW" : "RED"
+      );
+      byId("led-dot").className = "led-dot " + led.toLowerCase();
+      byId("led-label").textContent =
+        led === "WHITE" ? "白・追従中" :
+        led === "YELLOW" ? "黄・ジェスチャー待機中" : "赤・停止";
+
       byId("pc").textContent = status.pc_connected ? "接続中" : "未接続";
       byId("person").textContent = status.target_found ? "検出あり" : "検出なし";
       byId("rtt").textContent = status.rtt_ms == null ? "—" : status.rtt_ms + " ms";
