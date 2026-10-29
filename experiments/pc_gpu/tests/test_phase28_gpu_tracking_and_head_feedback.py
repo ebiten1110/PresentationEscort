@@ -164,5 +164,76 @@ class VisualServoTests(unittest.TestCase):
         self.assertFalse(planner.vision_verified_head)
 
 
+class GpuDetectorInterfaceTests(unittest.TestCase):
+    def test_gpu_tracks_low_scores_internally_but_exports_trusted_boxes(self):
+        # No CUDA, camera, cv2, numpy or ultralytics installation needed.
+        import importlib.util
+        import types
+        from unittest.mock import patch
+        from person_tracker import PersonTracker
+
+        def numeric(value):
+            return types.SimpleNamespace(item=lambda: value)
+
+        class FakeBoxes:
+            cls = [numeric(0), numeric(0)]
+            xyxy = [types.SimpleNamespace(tolist=lambda: [40, 40, 110, 190]),
+                    types.SimpleNamespace(tolist=lambda: [200, 60, 250, 180])]
+            conf = [numeric(.92), numeric(.25)]
+            id = [numeric(7), numeric(8)]
+
+            def __len__(self):
+                return 2
+
+        class FakeModel:
+            def __init__(self):
+                self.kwargs = None
+                self.reset_count = 0
+                self.predictor = types.SimpleNamespace(
+                    trackers=[types.SimpleNamespace(reset=self.reset)])
+            def reset(self):
+                self.reset_count += 1
+            def track(self, **kwargs):
+                self.kwargs = kwargs
+                return [types.SimpleNamespace(boxes=FakeBoxes(), keypoints=None)]
+            def predict(self, **kwargs):
+                raise AssertionError("tracking must use model.track")
+
+        stub_gesture = types.ModuleType("gesture_pose")
+        stub_gesture.both_hands_over_head = lambda _: False
+        stub_gesture.face_or_upper_body_aim = lambda points, box: (0, 0, "upper_body")
+        stubs = {
+            "cv2": types.ModuleType("cv2"),
+            "numpy": types.ModuleType("numpy"),
+            "ultralytics": types.SimpleNamespace(YOLO=lambda _: None),
+            "gesture_pose": stub_gesture,
+        }
+        module_name = "phase28_isolated_detector"
+        source = Path(__file__).resolve().parents[1] / "pc_detector_server.py"
+        spec = importlib.util.spec_from_file_location(module_name, source)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {**stubs, module_name: mod}):
+            spec.loader.exec_module(mod)
+            config = mod.ServerConfig("127.0.0.1", 8765, "fake", .45,
+                                      640, "cpu", tracking=True)
+            detector = mod.PersonDetector.__new__(mod.PersonDetector)
+            detector.config = config
+            detector.gesture_pose_model = None
+            detector.model = FakeModel()
+            detector.last_finish_time = None
+            detector.tracker = PersonTracker(min_confidence=.45)
+            detector.frame_seq = 0
+            result = detector.detect(types.SimpleNamespace(shape=(240, 320, 3)))
+            self.assertEqual(result.track_ids, [7])
+            self.assertEqual(len(result.people), 1)
+            self.assertEqual(result.confidence, .92)
+            self.assertEqual(detector.model.kwargs["conf"], .18)
+            self.assertTrue(detector.model.kwargs["persist"])
+            self.assertEqual(detector.model.kwargs["tracker"], "bytetrack.yaml")
+            detector.reset_tracking()
+            self.assertEqual(detector.model.reset_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

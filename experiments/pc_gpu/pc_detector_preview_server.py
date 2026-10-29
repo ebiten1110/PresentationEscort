@@ -38,6 +38,9 @@ def annotate(frame: np.ndarray, result: Any) -> np.ndarray:
         cv2.rectangle(image, (x1, y1), (x2, y2), (70, 220, 75), 2)
         active_gesture = (index - 1) in getattr(result, "gesture_indices", [])
         label = ("HANDS UP " if active_gesture else "PERSON ") + f"{index} {confidence:.0%}"
+        ids = getattr(result, "track_ids", []) or []
+        if index - 1 < len(ids) and ids[index - 1] is not None:
+            label += f" ID:{ids[index - 1]}"
         if active_gesture:
             cv2.rectangle(image, (x1, y1), (x2, y2), (10, 220, 250), 3)
         label_y = y1 - 7 if y1 >= 22 else min(height - 6, y1 + 17)
