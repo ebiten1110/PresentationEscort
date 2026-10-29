@@ -36,7 +36,10 @@ def annotate(frame: np.ndarray, result: Any) -> np.ndarray:
         y2 = max(0, min(height - 1, int(person["y2"])))
         confidence = float(person["confidence"])
         cv2.rectangle(image, (x1, y1), (x2, y2), (70, 220, 75), 2)
-        label = f"PERSON {index}  {confidence:.0%}"
+        active_gesture = (index - 1) in getattr(result, "gesture_indices", [])
+        label = ("HANDS UP " if active_gesture else "PERSON ") + f"{index} {confidence:.0%}"
+        if active_gesture:
+            cv2.rectangle(image, (x1, y1), (x2, y2), (10, 220, 250), 3)
         label_y = y1 - 7 if y1 >= 22 else min(height - 6, y1 + 17)
         cv2.putText(image, label, (x1 + 2, label_y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 2, cv2.LINE_AA)
@@ -92,6 +95,10 @@ def main() -> None:
     parser.add_argument("--model", default="yolo26n.pt")
     parser.add_argument("--confidence", type=float, default=0.45)
     parser.add_argument("--image-size", type=int, default=640)
+    parser.add_argument("--pose-model", default="yolo26n-pose.pt",
+                        help="Pose model for two-hands-over-head gesture and face aim")
+    parser.add_argument("--no-pose", action="store_true",
+                        help="Legacy person boxes only (gesture control disabled)")
     parser.add_argument("--device", default="0")
     args = parser.parse_args()
 
@@ -101,7 +108,8 @@ def main() -> None:
 
     config = ServerConfig(args.host, args.port, args.model,
                           args.confidence, args.image_size, args.device)
-    detector = PersonDetector(config)
+    detector = PersonDetector(config,
+                              gesture_pose_model=None if args.no_pose else args.pose_model)
     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_TITLE, 960, 540)
 
