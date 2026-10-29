@@ -4,90 +4,75 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>Presentation Escort｜操作コンソール</title>
+  <title>Presentation Escort | 操作コンソール</title>
   <link rel="stylesheet" href="/ui.css">
   <script src="/ui.js" defer></script>
 </head>
 <body>
   <main>
     <header>
-      <p class="eyebrow">PRESENTATION ESCORT / LOCAL OPERATOR</p>
-      <h1>ロボット操作コンソール</h1>
-      <p id="runtime-subtitle" class="subtitle">ローカル接続の操作画面｜実機/模擬を接続後に判定します</p>
+      <div class="brand"><strong>Presentation Escort</strong><span id="runtime-subtitle">ロボット操作コンソール</span></div>
+      <div class="connection"><span id="auth-message">未接続</span><span>GPU <b id="pc">—</b></span><span>ESP32 <b id="fw">—</b></span></div>
     </header>
-
-    <section class="panel auth">
-      <label for="token">コンソールに表示されたオペレータートークン</label>
-      <div class="authrow">
-        <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="トークンを入力">
-        <button id="connect">接続</button>
-      </div>
-      <p id="auth-message" aria-live="polite">接続待ち</p>
+    <section class="auth" id="auth-panel">
+      <label for="token">Piに表示された操作トークン</label>
+      <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="オペレータートークン">
+      <button id="connect">接続</button>
     </section>
-
-    <section class="stats">
-      <div class="stat"><span>安全モード</span><strong id="mode">未接続</strong></div>
-      <div class="stat"><span>GPU PC</span><strong id="pc">未接続</strong></div>
-      <div class="stat"><span>人物検出</span><strong id="person">未接続</strong></div>
-      <div class="stat"><span>往復遅延</span><strong id="rtt">—</strong></div>
-      <div class="stat"><span>ESP32</span><strong id="fw">模擬のみ</strong></div>
-      <div class="stat"><span>モーター制御範囲</span><strong id="motor">未確認</strong></div>
+    <section class="status-strip">
+      <div><small>モード</small><strong id="mode">未接続</strong></div>
+      <div><small>対象検出</small><strong id="person">—</strong></div>
+      <div><small>発表者ロック</small><strong id="lock-state">—</strong></div>
+      <div><small>AUTO準備</small><strong id="ready">—</strong></div>
+      <div><small>遅延</small><strong id="rtt">—</strong></div>
     </section>
-
-    <section class="panel">
-      <h2>発表者ロック</h2>
-      <p class="hint">周囲の実際の人物を目視で確認し、画面上の位置に合う候補を選択。発表者本人の識別ではありません。交差・消失したら再選択が必要です。</p>
-      <p>状態：<strong id="lock-state">未接続</strong></p>
-      <div id="candidates" class="direction" aria-live="polite"></div>
-      <button id="release-target" class="outline" disabled>ロックを解除</button>
-      <p id="lock-message" class="hint" aria-live="polite"></p>
+    <section class="workspace">
+      <section class="camera-pane">
+        <div class="pane-heading"><h2>カメラ・人物選択</h2><span>緑：選択中 / 灰：その他</span></div>
+        <div class="video-frame" id="video-frame">
+          <img id="camera-preview" alt="カメラ映像・人物検出" draggable="false">
+          <div id="video-placeholder">カメラ映像の接続待ち</div>
+        </div>
+        <div class="candidate-row">
+          <div id="candidates"></div>
+          <button id="release-target" class="quiet" disabled>選択解除</button>
+        </div>
+        <p id="lock-message" class="small-text">人物が1人なら安定検出後に自動選択。人が複数なら候補を選んでください。</p>
+      </section>
+      <section class="control-pane">
+        <div class="pane-heading"><h2>追従コントロール</h2></div>
+        <div class="current-mode"><small>モーター制御</small><span id="motor">未確認</span></div>
+        <button id="auto" class="primary" disabled>人物追従を開始</button>
+        <button id="stop" class="secondary" disabled>停止 / SAFE</button>
+        <button id="estop" class="emergency" disabled>緊急停止（ESTOP）</button>
+        <button id="reset" class="quiet" disabled>緊急停止を解除する</button>
+        <p id="feedback" role="status" aria-live="polite">ロボットは明示的に開始するまで動きません。</p>
+        <div class="quick-diag">
+          <div><small>ESP32応答</small><strong id="fw-arm-status">—</strong></div>
+          <div><small>異常</small><strong id="fault-cause">なし</strong></div>
+        </div>
+        <details class="advanced">
+          <summary>詳細診断・手動操作（開発者向け）</summary>
+          <dl>
+            <div><dt>モード理由</dt><dd id="reason">—</dd></div>
+            <div><dt>最終命令</dt><dd id="last">—</dd></div>
+            <div><dt>最終イベント</dt><dd id="event">—</dd></div>
+            <div><dt>発表者判定</dt><dd id="lock-reason">—</dd></div>
+            <div><dt>ESP32内部角度</dt><dd id="esp32-head-feedback">—</dd></div>
+            <div><dt>本体 / Busy</dt><dd id="esp32-walking-feedback">—</dd></div>
+            <div><dt>PWM診断</dt><dd id="esp32-servo-diagnostic">—</dd></div>
+            <div><dt>追従計画</dt><dd id="follow-debug">—</dd></div>
+            <div><dt>切り分け</dt><dd id="motion-diagnosis">—</dd></div>
+          </dl>
+          <div class="manual-actions">
+            <button id="manual" disabled>MANUAL</button>
+            <button id="left" disabled>左旋回</button>
+            <button id="right" disabled>右旋回</button>
+          </div>
+        </details>
+      </section>
     </section>
-
-    <section class="panel">
-      <h2>モード切り替え</h2>
-      <div class="actions">
-        <button id="auto" disabled>AUTOに切り替え</button>
-        <button id="manual" disabled>MANUALに切り替え</button>
-        <button id="stop" class="outline" disabled>STOP / SAFE</button>
-      </div>
-      <p class="hint">AUTOは人物を連続検出した場合だけ許可。MANUALも明示的な操作が必要です。</p>
-    </section>
-
-    <section class="panel">
-      <h2>手動操作（ボタンを押している間のみ）</h2>
-      <div class="direction">
-        <button id="left" disabled>◀ 左旋回</button>
-        <button id="right" disabled>右旋回 ▶</button>
-      </div>
-      <p class="hint">操作信号の更新が約350ms途絶えるとSAFEへ戻ります。前進・後退は未校正のため使用不可。</p>
-    </section>
-
-    <section class="panel danger">
-      <h2>緊急停止</h2>
-      <button id="estop" class="emergency" disabled>緊急停止（ESTOP）</button>
-      <button id="reset" class="outline" disabled>停止状態を解除（SAFEへ）</button>
-      <p class="hint">解除後も自動運転は再開されません。STOP/ESTOPはサーボ外部電源を物理的には遮断しません。</p>
-    </section>
-
-    <section class="panel">
-      <h2>状態ログ</h2>
-      <dl>
-        <div><dt>状態</dt><dd id="reason">未接続</dd></div>
-        <div><dt>最後の命令</dt><dd id="last">—</dd></div>
-        <div><dt>最後のイベント</dt><dd id="event">—</dd></div>
-        <div><dt>AUTO準備</dt><dd id="ready">—</dd></div>
-        <div><dt>ESP32 ARM応答</dt><dd id="fw-arm-status">—</dd></div>
-        <div><dt>停止・通信異常の原因</dt><dd id="fault-cause">—</dd></div>
-        <div><dt>発表者ロック判定</dt><dd id="lock-reason">—</dd></div>
-        <div><dt>ESP32内部角度（実角度センサーなし）：Yaw / Pitch</dt><dd id="esp32-head-feedback">—</dd></div>
-        <div><dt>ESP32歩行状態 / Busy</dt><dd id="esp32-walking-feedback">—</dd></div>
-        <div><dt>ESP32 PWM / PCA9685 診断</dt><dd id="esp32-servo-diagnostic">—</dd></div>
-        <div><dt>追従プラン・送信結果</dt><dd id="follow-debug">—</dd></div>
-        <div><dt>実機との切り分け</dt><dd id="motion-diagnosis">—</dd></div>
-      </dl>
-      <p id="feedback" role="status" aria-live="polite"></p>
-    </section>
-    <footer>Operator console · 操作許可と物理的な安全性の保証は別です · 実機電源はソフトで検出できません</footer>
+    <footer>対象の自動選択とモーターの自動起動は別です。STOPでは物理電源を遮断できません。</footer>
   </main>
 </body>
 </html>
