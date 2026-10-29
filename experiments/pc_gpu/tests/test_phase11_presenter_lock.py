@@ -273,6 +273,23 @@ class OperatorTargetApiTests(unittest.TestCase):
     def test_invalid_target_fields_400(self):
         self.assertEqual(self.request({"index":0,"frame_seq":1,"unexpected":True})[0],400)
 
+    def test_preview_requires_authentication(self):
+        self.run.get_preview = lambda: b"jpeg-preview"
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
+        conn.request("GET", "/api/preview.jpg")
+        response = conn.getresponse()
+        self.assertEqual(response.status, 401)
+        response.read()
+        conn.close()
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
+        conn.request("GET", "/api/preview.jpg",
+                     headers={"Authorization": "Bearer " + self.token})
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Type"), "image/jpeg")
+        self.assertEqual(response.read(), b"jpeg-preview")
+        conn.close()
+
     def test_only_explicit_release(self):
         self.run.process_detection(frame(),60)
         seq=self.run.status()["frame_seq"]
