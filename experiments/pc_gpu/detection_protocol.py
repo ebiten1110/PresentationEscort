@@ -35,6 +35,8 @@ class DetectionResult:
     # Unsupported/old PC model supplies empty defaults (no gesture permission).
     gesture_indices: list[int] = field(default_factory=list)
     aim_points: list[dict[str, Any]] = field(default_factory=list)
+    aim_x: int | None = None
+    aim_y: int | None = None
 
 
     def to_dict(self) -> Dict[str, Any]:
