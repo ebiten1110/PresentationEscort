@@ -241,6 +241,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self._uart_poll_error: Optional[str] = None
         self._arm_wait_since: Optional[float] = None
         self._last_arm_error: Optional[str] = None
+        self._last_led_color: Optional[str] = None
+        self._led_sent_at = 0.0
 
     def publish_preview(self, frame, detection) -> None:
         """Draw locally selected presenter vs other detections in the camera view."""
@@ -294,12 +296,34 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.gesture_control_enabled = False
                 self._gesture_pending_event = 0
 
+    def _update_status_led(self) -> None:
+        """Synchronize the Pi gesture-wait LED lease; firmware owns WHITE.
+
+        The watchdog-backed ESP32 updates actual WHITE/RED state independently.
+        No LED command can arm a motor. A lost UART stops yellow lease renewal.
+        """
+        now = time.monotonic()
+        mode = self.gateway.status().safety.mode
+        firmware = self.gateway.firmware_safety_status()
+        if mode == Mode.AUTO and firmware == "ARMED":
+            self._last_led_color = "WHITE"
+            return
+        desired = ("YELLOW" if self.gesture_control_enabled and
+                   mode == Mode.SAFE and firmware == "DISARMED"
+                   else "RED")
+        if (desired != self._last_led_color or
+                (desired == "YELLOW" and now - self._led_sent_at >= .35)):
+            self.sink.send("RGB_" + desired)
+            self._last_led_color = desired
+            self._led_sent_at = now
+
     def _poll_loop(self) -> None:
         """Real UART reader: persist errors beyond the next presenter event."""
         while not self._exit.wait(0.025):
             try:
                 with self._guard:
                     self._feedback.poll()
+                    self._update_status_led()
                     if self._reset_requested:
                         self.gateway.reset_emergency_stop()
                         if self.gateway.status().safety.mode == Mode.SAFE:
@@ -350,6 +374,13 @@ class LockedRealRuntime(LockedSimulationRuntime):
             )
             status["camera_resolution"] = self._preview_resolution
             status["gesture_control_enabled"] = self.gesture_control_enabled
+            status["led_indicated_color"] = (
+                "WHITE" if status["mode"] == "AUTO" and status["fw_safety"] == "ARMED"
+                else "YELLOW" if self.gesture_control_enabled and
+                     status["mode"] == "SAFE" and status["fw_safety"] == "DISARMED"
+                else "RED"
+            )
+            status["led_note"] = "ESP32 LED GPIO25/26/27; actual light not electrically sensed"
             status["horizontal_direction"] = "REVERSED_FOR_OPERATOR" if self.invert_horizontal else "LEGACY"
             status["simulation"] = False
             status["uart_poll_error"] = self._uart_poll_error
