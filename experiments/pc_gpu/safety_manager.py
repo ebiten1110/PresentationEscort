@@ -83,6 +83,61 @@ class SafetyManager:
         self.last_target_at: Optional[float] = None
         self.last_manual_at: Optional[float] = None
         self.confirmed_frames = 0
+        # Only the explicitly opted-in real-robot runtime may open this
+        # bounded search window. Normal missing detections still stop AUTO.
+        self._recovery_deadline: Optional[float] = None
+        self._recovery_started: Optional[float] = None
+        self._recovery_turn_used = False
+        self._recovery_confirmed = 0
+
+    @property
+    def recovering(self) -> bool:
+        return self._recovery_deadline is not None and self.mode == Mode.AUTO
+
+    def _clear_recovery(self) -> None:
+        self._recovery_deadline = None
+        self._recovery_started = None
+        self._recovery_turn_used = False
+        self._recovery_confirmed = 0
+
+    def begin_recovery(self, *, now: Optional[float] = None,
+                       duration_s: float = 1.5) -> bool:
+        """Hold AUTO briefly for ONE search pulse, with a hard time limit.
+
+        This must be called by a trusted local controller only after checking
+        the selected person's last bearing, pose continuity, and ESP32 IDLE.
+        It does not grant generic motion permission.
+        """
+        current = self._now(now)
+        self.tick(current)
+        if (not math.isfinite(duration_s) or not 0 < duration_s <= 1.5
+                or self.mode != Mode.AUTO or self.recovering
+                or not self._link_is_fresh(current)
+                or not self._target_is_fresh(current)):
+            return False
+        self._recovery_started = current
+        self._recovery_deadline = current + duration_s
+        self._recovery_turn_used = False
+        self._recovery_confirmed = 0
+        self.reason = "BOUNDED_VISUAL_SEARCH"
+        return True
+
+    def authorize_recovery_turn(self, command: str, *,
+                                now: Optional[float] = None) -> ControlDecision:
+        """Authorize at most one micro-turn immediately after genuine loss."""
+        current = self._now(now)
+        self.tick(current)
+        cmd = command.strip().upper()
+        if (not self.recovering or self._recovery_turn_used
+                or cmd not in _TURN_COMMANDS
+                or self._recovery_started is None
+                or current - self._recovery_started > 0.45
+                or not self._link_is_fresh(current)
+                or not self._target_is_fresh(current)
+                or self._recovery_confirmed != 0):
+            return ControlDecision(False, "STOP", "SEARCH_TURN_NOT_AUTHORIZED", self.mode)
+        self._recovery_turn_used = True
+        return ControlDecision(True, cmd, "ONE_BOUNDED_SEARCH_TURN", self.mode)
 
     @staticmethod
     def _now(now: Optional[float]) -> float:
@@ -97,6 +152,7 @@ class SafetyManager:
         self.mode = Mode.SAFE
         self.reason = reason
         self.last_manual_at = None
+        self._clear_recovery()
 
     def emergency_stop(self) -> None:
         self.mode = Mode.ESTOP
@@ -104,6 +160,7 @@ class SafetyManager:
         self.confirmed_frames = 0
         self.last_target_at = None
         self.last_manual_at = None
+        self._clear_recovery()
 
     def reset_emergency_stop(self) -> None:
         """Only explicit operator acknowledgement; never automatically arm."""
@@ -113,11 +170,13 @@ class SafetyManager:
             self.confirmed_frames = 0
             self.last_target_at = None
             self.last_link_at = None
+            self._clear_recovery()
 
     def connection_lost(self) -> None:
         self.last_link_at = None
         self.last_target_at = None
         self.confirmed_frames = 0
+        self._clear_recovery()
         # MANUAL is a separate operator channel: it must remain usable
         # when the AI/PC inference link fails. Deadman still applies.
         if self.mode == Mode.AUTO:
@@ -144,6 +203,14 @@ class SafetyManager:
             self.disarm("LINK_TIMEOUT")
             self.confirmed_frames = 0
             self.last_target_at = None
+            return
+        if self.recovering and (self._recovery_deadline is None
+                                or current >= self._recovery_deadline):
+            self.confirmed_frames = 0
+            self.last_target_at = None
+            self.disarm("SEARCH_TIMEOUT")
+            return
+        if self.recovering:
             return
         if self.mode == Mode.AUTO and not self._target_is_fresh(current):
             self.confirmed_frames = 0
@@ -182,6 +249,17 @@ class SafetyManager:
             return
 
         self.last_link_at = current
+        if self.recovering:
+            if found:
+                self._recovery_confirmed += 1
+                if self._recovery_confirmed >= 3:
+                    self._clear_recovery()
+                    self.last_target_at = current
+                    self.confirmed_frames = self.policy.auto_confirm_frames
+                    self.reason = "SEARCH_REACQUIRED_3_FRAMES"
+            else:
+                self._recovery_confirmed = 0
+            return
         if found:
             self.last_target_at = current
             self.confirmed_frames = min(
@@ -246,6 +324,8 @@ class SafetyManager:
             return ControlDecision(False, "STOP", "UNKNOWN_OR_UNSAFE_COMMAND", self.mode)
         if name in _TRANSLATION_COMMANDS and not self.policy.allow_translation:
             return ControlDecision(False, "STOP", "TRANSLATION_DISABLED", self.mode)
+        if self.recovering:
+            return ControlDecision(False, "STOP", "SEARCH_ONLY_ONE_TURN", self.mode)
         if origin not in (Mode.AUTO.value, Mode.MANUAL.value) or origin != self.mode.value:
             return ControlDecision(False, "STOP", "MODE_MISMATCH_OR_DISARMED", self.mode)
         if self.mode == Mode.AUTO:

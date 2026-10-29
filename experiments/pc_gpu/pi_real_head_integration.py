@@ -18,10 +18,12 @@ from typing import Optional
 
 from esp32_feedback_poller import Esp32FeedbackPoller
 from motion_gateway import PiMotionGateway
+from safety_manager import ControlDecision
 from pi_operator_console import CameraInferenceWorker, OperatorRuntime, OperatorServer
 from pi_presenter_lock_demo import LockedSimulationRuntime
 from presenter_lock import PresenterLock
-from remote_person_controller import RemotePersonController
+from remote_person_controller import FollowCycle, RemotePersonController
+from person_target_adapter import detection_to_person_target
 from safety_manager import Mode
 from serial_command_sink import SerialCommandSink
 from v883_person_dual_loop import V883PersonDualLoop
@@ -194,6 +196,52 @@ class HeadOnlySerialSink:
         self._inner.close()
 
 
+class BoundedSearchGateway(PiMotionGateway):
+    """Real-runner-only search permit; baseline Phase10 gateway unchanged."""
+
+    def request_recovery_turn(self, command: str, *,
+                              now: Optional[float] = None) -> ControlDecision:
+        with self._lock:
+            self._tick_locked(now)
+            if (self._transport_fault or self._closed or
+                    (self._requires_watchdog and
+                     not (self._thread and self._thread.is_alive())) or
+                    (self._firmware_safety is not None and
+                     not self._firmware_safety.fresh_armed(self.safety._now(now)))):
+                return ControlDecision(False, "STOP", "SEARCH_LINK_NOT_READY",
+                                       self.safety.mode)
+            decision = self.safety.authorize_recovery_turn(command, now=now)
+            if not decision.approved:
+                return decision
+            try:
+                self.sink.send(decision.command)
+                self._last_command = decision.command
+                self._motion_pending = True
+                return decision
+            except Exception:
+                self._transport_fault = True
+                self.safety.emergency_stop()
+                self._stop_locked("SEARCH_SEND_FAILED", force=True)
+                return ControlDecision(False, "STOP", "SEARCH_SEND_FAILED", Mode.ESTOP)
+
+
+class BoundedSearchController(RemotePersonController):
+    """No planner output until three matched frames restore visual tracking."""
+
+    def process(self, result, *, rtt_ms: float,
+                now: Optional[float] = None) -> FollowCycle:
+        if not self.gateway.safety.recovering:
+            return super().process(result, rtt_ms=rtt_ms, now=now)
+        current = time.monotonic() if now is None else now
+        valid = detection_to_person_target(result) is not None and not result.error
+        self.gateway.observe_detection(valid, rtt_ms, now=current)
+        mode = self.gateway.status(now=current).safety.mode
+        if not valid or self.gateway.safety.recovering or mode != Mode.AUTO:
+            return FollowCycle(mode, valid, self.planner.target_lost(),
+                               False, False, "SEARCH_REACQUISITION_CONFIRMING")
+        return super().process(result, rtt_ms=rtt_ms, now=current)
+
+
 class LockedRealRuntime(LockedSimulationRuntime):
     """Reuse real V2 presenter-lock logic and safety gateway without a virtual MCU."""
 
@@ -210,7 +258,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
         # Gesture selects the actual person; never silently select a passerby.
         self.presenter = PresenterLock(gesture_enabled=True,
                                        gesture_confirm_frames=4,
-                                       transient_recovery_s=0.9)
+                                       transient_recovery_s=1.5)
         self.gesture_control_enabled = False
         self._gesture_handled_event = 0
         self._gesture_pending_event = 0
@@ -226,8 +274,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self.sink = HeadOnlySerialSink(
             serial_port, head_enabled=head_enabled, body_enabled=body_enabled,
             pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1])
-        self.gateway = PiMotionGateway(self.sink)
-        self.controller = RemotePersonController(
+        self.gateway = BoundedSearchGateway(self.sink)
+        self.controller = BoundedSearchController(
             self.gateway,
             planner=(HeadBodyTurnPlanner(
                 pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1],
@@ -251,6 +299,41 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self._last_arm_error: Optional[str] = None
         self._last_led_color: Optional[str] = None
         self._led_sent_at = 0.0
+        self._search_direction: Optional[str] = None
+        self._search_started_at = 0.0
+        self._search_result = "IDLE"
+
+    def _search_candidate(self, detection, rtt_ms: float, now: float) -> Optional[str]:
+        """Only a genuinely empty, sequential frame after a side-edge lock."""
+        if (not self.body_enabled or not self.gesture_control_enabled
+                or self.gateway.status().safety.mode != Mode.AUTO
+                or self.gateway.firmware_safety_status() != "ARMED"
+                or self.presenter.state != "TRACKING"
+                or self.presenter._locked is None
+                or self.presenter._frame_time is None
+                or now - self.presenter._frame_time > .45
+                or detection.error or detection.protocol_version != 2
+                or type(detection.frame_seq) is not int
+                or detection.frame_seq != self.presenter._last_seq + 1
+                or detection.people != []
+                or not math.isfinite(rtt_ms) or not 0 <= rtt_ms <= 500
+                or self.presenter._frame_size != (detection.frame_width,
+                                                  detection.frame_height)):
+            return None
+        previous = getattr(self, "_last_cycle", None)
+        if (previous is None or not previous.target_valid
+                or previous.plan.suggested_body_turn not in ("TRACK_LEFT", "TRACK_RIGHT")
+                or abs(previous.plan.yaw_target_deg) < 2.5):
+            return None
+        width = detection.frame_width
+        if abs(self.presenter._locked.cx - width / 2) < width * self.turn_edge_fraction:
+            return None
+        telemetry = self.controller.telemetry.snapshot(now=now)
+        if (not telemetry.head_fresh or not telemetry.body_idle_confirmed
+                or self.controller._pending_turn is not None
+                or self.controller.planner.motion_pending):
+            return None
+        return previous.plan.suggested_body_turn
 
     def publish_preview(self, frame, detection) -> None:
         """Render a target-to-center vector, action zone and last seen bearing."""
@@ -308,7 +391,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
                             (35, 185, 255), 2, cv2.LINE_AA, tipLength=.09)
             # Display what the controller can actually do, not simply a
             # geometric zone. SAFE must never be labelled as moving.
-            if drive_mode != Mode.AUTO:
+            if self.gateway.safety.recovering:
+                zone = "SEARCH: REACQUIRE 3 FRAMES"
+            elif drive_mode != Mode.AUTO:
                 zone = "SAFE / NO MOTION"
             elif follow is not None and follow.body_sent:
                 zone = "BODY TURN SENT"
@@ -326,8 +411,12 @@ class LockedRealRuntime(LockedSimulationRuntime):
         elif state in ("LOST", "TEMPORARILY_LOST") and last_aim is not None and now-last_seen_at < 3.:
             lx, ly = last_aim
             direction = "RIGHT" if lx > cx else "LEFT" if lx < cx else "CENTER"
-            heading = f"TARGET LOST / STOP - LAST SEEN {direction}"
+            heading = (f"SEARCHING {self._search_direction} / 1 TURN MAX - LAST SEEN {direction}"
+                       if self.gateway.safety.recovering else
+                       f"TARGET LOST / STOP - LAST SEEN {direction}")
             cv2.circle(img, (lx, ly), 13, (40, 65, 250), 2, cv2.LINE_AA)
+            cv2.arrowedLine(img, (lx, ly), (cx, cy), (35,185,255), 2,
+                            cv2.LINE_AA, tipLength=.09)
         else:
             heading = "WAIT: HANDS OVER HEAD / NO TARGET"
         # Always annotate the decision at the top of the camera image.
@@ -356,6 +445,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 # authorization. An operator must re-enable standby.
                 self.gesture_control_enabled = False
                 self._gesture_pending_event = 0
+                self._search_direction = None
+                self._search_result = "LINK_LOST"
 
     def _update_status_led(self) -> None:
         """Synchronize the Pi gesture-wait LED lease; firmware owns WHITE.
@@ -384,6 +475,14 @@ class LockedRealRuntime(LockedSimulationRuntime):
             try:
                 with self._guard:
                     self._feedback.poll()
+                    # The Pi watchdog may have timed out the search without
+                    # any further camera frames. Never silently reacquire.
+                    gs = self.gateway.status().safety
+                    if (gs.reason == "SEARCH_TIMEOUT"
+                            and self._search_direction is not None):
+                        self.presenter.clear("SEARCH_FAILED_NEW_GESTURE_REQUIRED")
+                        self._search_result = "TIMED_OUT"
+                        self._search_direction = None
                     self._update_status_led()
                     if self._reset_requested:
                         self.gateway.reset_emergency_stop()
@@ -435,6 +534,16 @@ class LockedRealRuntime(LockedSimulationRuntime):
             )
             status["camera_resolution"] = self._preview_resolution
             status["gesture_control_enabled"] = self.gesture_control_enabled
+            status["search_state"] = ("SEARCHING" if self.gateway.safety.recovering
+                                      else self._search_result)
+            status["search_direction"] = self._search_direction
+            status["search_remaining_s"] = (
+                round(max(0.0, self.gateway.safety._recovery_deadline -
+                          time.monotonic()), 2)
+                if self.gateway.safety.recovering else 0.0
+            )
+            status["search_reacquire_frames"] = self.gateway.safety._recovery_confirmed
+            status["search_max_turns"] = 1
             status["led_indicated_color"] = (
                 "WHITE" if status["mode"] == "AUTO" and status["fw_safety"] == "ARMED"
                 else "YELLOW" if self.gesture_control_enabled and
@@ -486,7 +595,38 @@ class LockedRealRuntime(LockedSimulationRuntime):
 
     def process_detection(self, detection, rtt_ms: float) -> None:
         with self._guard:
+            now = time.monotonic()
+            was_searching = self.gateway.safety.recovering
+            proposal = None if was_searching else self._search_candidate(
+                detection, rtt_ms, now)
+            if proposal and self.gateway.safety.begin_recovery(now=now):
+                self._search_direction = proposal
+                self._search_started_at = now
+                self._search_result = "SEARCHING"
             super().process_detection(detection, rtt_ms)
+            if self.gateway.safety.recovering:
+                if self.presenter.state not in ("TEMPORARILY_LOST", "TRACKING"):
+                    self.gateway.request_motion("STOP", source="AUTO")
+                    self._search_direction = None
+                    self._search_result = "REJECTED_AMBIGUOUS_TARGET"
+                elif proposal is not None:
+                    # The person was visible on the preceding valid frame,
+                    # but this frame contains nobody. One micro-turn only.
+                    result = self.gateway.request_recovery_turn(proposal)
+                    if result.approved:
+                        self.controller._pending_turn = proposal
+                        self.controller.planner.motion_pending = True
+                        self._last_event = "SEARCH_ONE_MICRO_TURN_" + proposal
+                    else:
+                        self.gateway.request_motion("STOP", source="AUTO")
+                        self._search_direction = None
+                        self._search_result = "SEARCH_TURN_BLOCKED_" + result.reason
+            elif was_searching and self.gateway.status().safety.mode == Mode.AUTO:
+                self._search_result = "REACQUIRED_3_FRAMES"
+                self._search_direction = None
+            elif was_searching:
+                self._search_result = "SEARCH_STOPPED"
+                self._search_direction = None
             current_event = self.presenter.gesture_event_id
             if current_event > self._gesture_handled_event and current_event != self._gesture_pending_event:
                 self._gesture_pending_event = current_event
@@ -519,12 +659,16 @@ class LockedRealRuntime(LockedSimulationRuntime):
             if action == "gesture_off":
                 self.gesture_control_enabled = False
                 self._gesture_pending_event = 0
+                self._search_direction = None
+                self._search_result = "CANCELED"
                 super().action("stop")
                 self.presenter.clear("GESTURE_STANDBY_DISABLED")
                 return {"ok": True, "gesture_control_enabled": False}
             if action in ("stop", "estop"):
                 self.gesture_control_enabled = False
                 self._gesture_pending_event = 0
+                self._search_direction = None
+                self._search_result = "CANCELED"
             if action == "manual":
                 return {"ok": False, "error": "BODY_MOVEMENT_NOT_APPROVED"}
             if action in {"auto", "reset"} and not self.head_enabled:
