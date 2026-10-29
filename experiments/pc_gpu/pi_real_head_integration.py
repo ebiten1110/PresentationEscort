@@ -165,7 +165,12 @@ class _SmoothHeadAiming:
         pitch_delta = (self._proportional_delta(
             virtual_y, HEAD_Y_DEADZONE_PX, self._pitch_gain_deg_per_px)
             if plan.pitch_tracking_enabled else 0.0)
-        desired_yaw = max(-3.0, min(3.0,
+        # Use a smaller neck envelope when the person is far away. At the
+        # edge, transfer the remaining angular bearing to the body instead
+        # of repeatedly pushing the camera out of frame.
+        yaw_soft_limit = (max(1.1, 3.0 * self.distance_gain)
+                          if self.distance_adaptive_head else 3.0)
+        desired_yaw = max(-yaw_soft_limit, min(yaw_soft_limit,
             yaw_feedback + yaw_delta * CAMERA_X_TO_ROBOT_YAW_DIRECTION))
         # If the image is mirrored for display, *only* yaw sign is swapped
         # before _filter_aim, as in the previously tested implementation.
@@ -324,10 +329,12 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
             # its calibrated boundary and the face approaches the edge do
             # we request a feedback-gated body turn while vision is still valid.
             feedback_yaw = kwargs.get("head_yaw_feedback_deg")
-            head_near_limit = (abs(self.yaw_target_deg) >= 2.5
+            yaw_limit = (max(1.1, 3.0 * self.distance_gain)
+                         if self.distance_adaptive_head else 3.0)
+            head_near_limit = (abs(self.yaw_target_deg) >= .85 * yaw_limit
                                and kwargs.get("head_feedback_fresh", False)
                                and feedback_yaw is not None
-                               and abs(feedback_yaw) >= 2.2
+                               and abs(feedback_yaw) >= .70 * yaw_limit
                                and self.yaw_target_deg * feedback_yaw > 0)
             # An exceptionally large, still-visible side displacement can
             # escape the frame before the neck reaches +/-2.5 degrees.
@@ -336,10 +343,10 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
             # frame votes, and all existing gateway/firmware motion gates.
             extreme_visible_edge = (
                 normalized_error >= max(.30, self.edge_fraction * 2.)
-                and abs(self.yaw_target_deg) >= 1.5
+                and abs(self.yaw_target_deg) >= min(1.5, .60 * yaw_limit)
                 and kwargs.get("head_feedback_fresh", False)
                 and feedback_yaw is not None
-                and abs(feedback_yaw) >= 1.2
+                and abs(feedback_yaw) >= min(1.2, .50 * yaw_limit)
                 and self.yaw_target_deg * feedback_yaw > 0
             )
             if (normalized_error < self.edge_fraction or
@@ -553,7 +560,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
         super().__init__()
         # Gesture selects the actual person; never silently select a passerby.
         self.presenter = PresenterLock(gesture_enabled=True,
-                                       gesture_confirm_frames=4,
+                                       gesture_confirm_frames=3,
                                        transient_recovery_s=1.5)
         self.gesture_control_enabled = False
         self._gesture_handled_event = 0
@@ -656,9 +663,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
                                                   detection.frame_height)):
             return None
         previous = getattr(self, "_last_cycle", None)
+        yaw_limit = (max(1.1, 3.0 * self.controller.planner.distance_gain)
+                     if self.distance_adaptive_head else 3.0)
         if (previous is None or not previous.target_valid
                 or previous.plan.suggested_body_turn not in ("TRACK_LEFT", "TRACK_RIGHT")
-                or abs(previous.plan.yaw_target_deg) < 2.5):
+                or abs(previous.plan.yaw_target_deg) < .85 * yaw_limit):
             return None
         width = detection.frame_width
         if abs(self.presenter._locked.cx - width / 2) < width * self.turn_edge_fraction:
@@ -776,7 +785,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
             elif follow is not None and follow.plan.reason == "WAIT_ESP32_IDLE_CONFIRMATION":
                 zone = "BODY TURN IN PROGRESS"
             elif (abs(dx) >= turn_threshold_px and follow is not None
-                  and abs(follow.plan.yaw_target_deg) >= 2.5):
+                  and abs(follow.plan.yaw_target_deg) >= .85 * (
+                      max(1.1, 3.0 * self.controller.planner.distance_gain)
+                      if self.distance_adaptive_head else 3.0)):
                 zone = "BODY TURN PREPARING"
             elif abs(dx) < width*.035 and abs(dy) < height*.06:
                 zone = "CENTERED"
@@ -1229,6 +1240,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--capture-diagnostics", action="store_true",
                     help="Opt in to bounded RAM image+decision capture and authenticated ZIP download")
     ap.add_argument("--jpeg-quality", type=int, default=80)
+    ap.add_argument("--preview-every-n-frames", type=int, default=1,
+                    help="Display/diagnostic JPEG only every N inference frames; all tracking frames still processed")
     ap.add_argument("--port", type=int, default=8766)
     power_group = ap.add_mutually_exclusive_group(required=True)
     power_group.add_argument("--servo-power-on", action="store_true",
@@ -1305,6 +1318,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         ap.error("independent pitch control requires physical pitch calibration")
     if not 5 <= args.camera_fps <= 60:
         ap.error("camera fps request must be 5..60")
+    if not 1 <= args.preview_every_n_frames <= 10:
+        ap.error("preview decimation must be 1..10")
     if args.enable_head_test and not args.servo_power_on:
         ap.error("Head motor test requires explicitly declared servo V+ ON")
     if args.enable_head_test and not (
@@ -1352,6 +1367,7 @@ def main(argv: Optional[list[str]] = None) -> None:
                 camera_fps=args.camera_fps,
                 jpeg_quality=args.jpeg_quality,
                 camera_mjpeg=args.camera_mjpeg,
+                preview_every_n_frames=args.preview_every_n_frames,
             )
             worker.start()
         token = secrets.token_urlsafe(32)

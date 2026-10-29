@@ -128,6 +128,58 @@ class PresenterLockTests(unittest.TestCase):
         self.assertFalse(result.found)
         self.assertEqual(self.lock.state, "LOST")
 
+    def test_overlapping_boxes_keep_distinct_stable_presenter_face(self):
+        # Field log seq759-760: two body boxes overlap, but their faces are
+        # separated by ~167px and the original face moved only ~4px.
+        def f(seq, people, aims):
+            return replace(frame(seq, people), frame_width=640,
+                           frame_height=480, aim_points=aims)
+        original = candidate(323, y=62, w=261, h=418, conf=.85)
+        face = [{"x": 426, "y": 126, "source": "face"}]
+        self.lock.observe(f(1, [original], face), now=10.)
+        self.assertTrue(self.lock.select(0, 1, now=10.1)[0])
+        self.assertTrue(self.lock.observe(f(2, [original], face), now=10.2).found)
+        third = f(3, [candidate(298, y=59, w=245, h=421, conf=.87),
+                      candidate(503, y=107, w=137, h=373, conf=.66)],
+                  [{"x": 423, "y": 122, "source": "face"},
+                   {"x": 590, "y": 214, "source": "face"}])
+        self.assertTrue(self.lock.observe(third, now=10.35).found)
+        self.assertEqual(self.lock.state, "TRACKING")
+
+    def test_fast_horizontal_crossing_keeps_one_person_face(self):
+        def f(seq, x, y, w, h, aim_x, aim_y):
+            return replace(frame(seq, [candidate(x, y=y, w=w, h=h, conf=.85)]),
+                           frame_width=640, frame_height=480,
+                           aim_points=[{"x": aim_x, "y": aim_y, "source": "face"}])
+        self.lock.observe(f(1, 254, 18, 303, 462, 379, 99), now=10.)
+        self.assertTrue(self.lock.select(0, 1, now=10.1)[0])
+        self.lock.observe(f(2, 254, 18, 303, 462, 379, 99), now=10.2)
+        # Field log seq877-878: face x379 -> x214 in a single frame.
+        found = self.lock.observe(f(3, 33, 29, 337, 451, 214, 106), now=10.35)
+        self.assertTrue(found.found)
+        self.assertEqual(self.lock.state, "TRACKING")
+
+    def test_crouch_to_stand_preserves_vertical_person_lock(self):
+        def f(seq, y, h, face_y):
+            return replace(frame(seq, [candidate(180, y=y, w=120, h=h, conf=.9)]),
+                           frame_width=640, frame_height=480,
+                           aim_points=[{"x": 240, "y": face_y, "source": "face"}])
+        self.lock.observe(f(1, 190, 170, 220), now=10.)
+        self.assertTrue(self.lock.select(0, 1, now=10.1)[0])
+        self.assertTrue(self.lock.observe(f(2, 190, 170, 220), now=10.2).found)
+        self.assertTrue(self.lock.observe(f(3, 20, 460, 70), now=10.35).found)
+
+    def test_gesture_survives_one_pose_detection_gap(self):
+        self.lock = PresenterLock(gesture_enabled=True, gesture_confirm_frames=3)
+        def f(seq, raised):
+            return replace(frame(seq, [candidate(100, conf=.9)]),
+                           gesture_indices=[0] if raised else [],
+                           aim_points=[{"x": 132, "y": 60, "source": "face"}])
+        self.assertFalse(self.lock.observe(f(1, True), now=10.).found)
+        self.assertFalse(self.lock.observe(f(2, False), now=10.2).found)
+        self.assertFalse(self.lock.observe(f(3, True), now=10.4).found)
+        self.assertTrue(self.lock.observe(f(4, True), now=10.6).found)
+
     def test_occlusion_and_crossing_immediate_loss(self):
         self.acquire()
         self.assertFalse(self.lock.observe(frame(2, [candidate(20), candidate(38)]), now=10.15).found)

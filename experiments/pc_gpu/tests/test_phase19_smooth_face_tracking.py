@@ -69,6 +69,34 @@ class SmoothFaceTests(unittest.TestCase):
         self.assertGreater(abs(quick), abs(old))
         self.assertLessEqual(abs(quick), 1.)
 
+    def test_far_distance_neck_soft_limit_hands_off_to_body(self):
+        far = sized_face_target(x=15, width=24, height=48)
+        head = HeadOnlyPlanner(distance_adaptive_head=True, head_speed_deg_s=3.5)
+        yaw = 0.
+        for i in range(24):
+            plan = head.step(far, now=1.+i*.12,
+                             head_yaw_feedback_deg=yaw,
+                             head_feedback_fresh=True)
+            yaw = plan.yaw_target_deg
+        self.assertLessEqual(abs(yaw), 1.2,
+                             "far person should not pin the camera at +/-3 deg")
+        body = HeadBodyTurnPlanner(distance_adaptive_head=True,
+            stable_frames=2, head_speed_deg_s=3.5)
+        yaw = 0.
+        turn = None
+        for i in range(32):
+            plan = body.step(far, now=1.+i*.12,
+                             head_yaw_feedback_deg=yaw,
+                             head_pitch_feedback_deg=0.,
+                             head_feedback_fresh=True, body_idle=True)
+            yaw = plan.yaw_target_deg
+            if plan.body_command:
+                turn = plan
+                break
+        self.assertIsNotNone(turn,
+                             "body should take over while the distant head remains near neutral")
+        self.assertLess(abs(turn.yaw_target_deg), 2.5)
+
     def test_relative_pitch_reference_unpins_high_face_without_expanding_range(self):
         planner = HeadOnlyPlanner(pitch_min=-2., pitch_max=2.,
                                   relative_pitch_reference=True,
@@ -234,6 +262,15 @@ class SmoothFaceTests(unittest.TestCase):
         for invalid in (0, 3, 61, 100):
             with self.assertRaises(ValueError):
                 CameraInferenceWorker(None, "127.0.0.1", camera_fps=invalid)
+
+    def test_preview_decimation_preserves_tracking_frame_contract(self):
+        worker = CameraInferenceWorker(None, "127.0.0.1",
+                                        preview_every_n_frames=3)
+        self.assertEqual(worker.preview_every_n_frames, 3)
+        for invalid in (0, -1, 11, 1.5, True):
+            with self.assertRaises(ValueError):
+                CameraInferenceWorker(None, "127.0.0.1",
+                                      preview_every_n_frames=invalid)
 
     def test_speed_limit_validation(self):
         for rate in (0., -3., float("nan"), float("inf"), 20.):

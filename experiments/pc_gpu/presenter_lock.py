@@ -37,6 +37,8 @@ class PresenterLock:
         self.gesture_event_id = 0
         self._gesture_candidate: Optional[PersonBox] = None
         self._gesture_streak = 0
+        self._gesture_candidate_face: Optional[tuple[int, int]] = None
+        self._gesture_gap_frames = 0
         self._needs_resume_gesture = False
         self.auto_select_single = bool(auto_select_single)
         self.transient_recovery_s = transient_recovery_s
@@ -76,6 +78,8 @@ class PresenterLock:
         self._locked_aim_source = ""
         self._gesture_candidate = None
         self._gesture_streak = 0
+        self._gesture_candidate_face = None
+        self._gesture_gap_frames = 0
         self.locked = False
         self.state = "UNLOCKED"
         self._needs_resume_gesture = False
@@ -89,6 +93,8 @@ class PresenterLock:
         self._locked_aim_source = ""
         self._gesture_candidate = None
         self._gesture_streak = 0
+        self._gesture_candidate_face = None
+        self._gesture_gap_frames = 0
         self.locked = False
         self.state = "LOST"
         self._needs_resume_gesture = False
@@ -134,6 +140,7 @@ class PresenterLock:
         new_frame_size = (detection.frame_width, detection.frame_height)
         if self._frame_size is not None and new_frame_size != self._frame_size:
             self._lose("CAMERA_RESOLUTION_CHANGED")
+        previous_frame_time = self._frame_time
         self._frame_size = new_frame_size
         self._last_seq = detection.frame_seq
         self._frame_time = now
@@ -181,12 +188,36 @@ class PresenterLock:
                 if proposed is not None and self._near_another(proposed, candidates):
                     proposed = None
                 previous = self._gesture_candidate
+                if (proposed is None and len(candidates) == 1 and
+                        previous is not None and self._gesture_streak > 0 and
+                        self._gesture_gap_frames == 0 and
+                        abs(candidates[0].cx - previous.cx) <=
+                        max(20., previous.width * .35)):
+                    # One missing pose frame at ~7fps is not a fresh gesture,
+                    # but should not restart an otherwise held hands-up signal.
+                    self._gesture_gap_frames = 1
+                    self.reason = "GESTURE_ONE_FRAME_GAP"
+                    return suppressed
+                pose = (detection.aim_points[index] if
+                        proposed is not None and isinstance(detection.aim_points, list)
+                        and index < len(detection.aim_points) else None)
+                proposed_face = ((pose["x"], pose["y"])
+                        if isinstance(pose, dict) and pose.get("source") == "face"
+                        and type(pose.get("x")) is int and type(pose.get("y")) is int
+                        else None)
+                face_stable = (proposed_face is not None and
+                               self._gesture_candidate_face is not None and
+                               abs(proposed_face[0] - self._gesture_candidate_face[0]) <= 42 and
+                               abs(proposed_face[1] - self._gesture_candidate_face[1]) <= 42)
                 stable = proposed is not None and previous is not None and (
                     abs(proposed.cx - previous.cx) <= max(15., previous.width * .30)
-                    and abs(proposed.cy - previous.cy) <= max(15., previous.height * .30)
-                    and .70 <= proposed.width / previous.width <= 1.45)
+                    and (face_stable or (
+                        abs(proposed.cy - previous.cy) <= max(15., previous.height * .30)
+                        and .70 <= proposed.width / previous.width <= 1.45)))
                 self._gesture_streak = (self._gesture_streak + 1) if stable else (1 if proposed else 0)
                 self._gesture_candidate = proposed
+                self._gesture_candidate_face = proposed_face
+                self._gesture_gap_frames = 0
                 self.reason = "HANDS_OVER_HEAD_CONFIRMING" if proposed else "WAIT_BOTH_HANDS_OVER_HEAD"
                 if proposed is None or self._gesture_streak < self.gesture_confirm_frames:
                     return suppressed
@@ -197,6 +228,8 @@ class PresenterLock:
                 self.gesture_event_id += 1
                 self._gesture_candidate = None
                 self._gesture_streak = 0
+                self._gesture_candidate_face = None
+                self._gesture_gap_frames = 0
             elif self.auto_select_single and len(candidates) == 1:
                 candidate = candidates[0]
                 previous = self._candidate_last
@@ -263,6 +296,45 @@ class PresenterLock:
                     and abs(candidate.cy - original.cy) <= max(
                         original.height * .30, detection.frame_height * .10)):
                 allowed = [candidate]
+        # Face/box continuity also tolerates a swift horizontal crossing or
+        # a crouch-to-stand transition. Only when BOTH adjacent frames have
+        # one highly confident person; a crowd still invalidates the lock.
+        if (not allowed and previous_candidate_count == 1 and
+                len(candidates) == 1 and candidates[0].confidence >= .75 and
+                self._locked_aim is not None and self._locked_aim_source == "face" and
+                previous_frame_time is not None and
+                0 <= now - previous_frame_time <= .30 and
+                isinstance(detection.aim_points, list) and len(detection.aim_points) == 1):
+            candidate = candidates[0]
+            face = detection.aim_points[0]
+            overlap_w = max(0, min(original.x2, candidate.x2) -
+                            max(original.x1, candidate.x1))
+            overlap_h = max(0, min(original.y2, candidate.y2) -
+                            max(original.y1, candidate.y1))
+            smaller_area = min(original.width * original.height,
+                               candidate.width * candidate.height)
+            valid_face = (isinstance(face, dict) and face.get("source") == "face"
+                          and type(face.get("x")) is int and type(face.get("y")) is int
+                          and candidate.x1 <= face["x"] <= candidate.x2
+                          and candidate.y1 <= face["y"] <= candidate.y2)
+            cross = (valid_face and .7 <= candidate.width / original.width <= 1.4
+                     and .7 <= candidate.height / original.height <= 1.4
+                     and abs(face["x"] - self._locked_aim[0]) <=
+                     detection.frame_width * .28
+                     and abs(face["y"] - self._locked_aim[1]) <=
+                     detection.frame_height * .13
+                     and smaller_area > 0 and
+                     overlap_w * overlap_h / smaller_area >= .22)
+            standing = (valid_face and .6 <= candidate.width / original.width <= 1.7
+                        and .25 <= candidate.height / original.height <= 3.5
+                        and abs(face["x"] - self._locked_aim[0]) <=
+                        detection.frame_width * .09
+                        and abs(face["y"] - self._locked_aim[1]) <=
+                        detection.frame_height * .32
+                        and overlap_w >= min(original.width, candidate.width) * .65
+                        and overlap_h >= min(original.height, candidate.height) * .45)
+            if cross or standing:
+                allowed = [candidate]
         # During a bounded detector dropout, retain a single significantly
         # overlapping person as a VISUAL hint only. The first lost frame
         # already disarmed AUTO; this must not issue any ARM request.
@@ -298,7 +370,8 @@ class PresenterLock:
         chosen = allowed[0]
         # A nearby second person can exchange places on the next frame.
         # Do not continue steering through an interaction/occlusion.
-        if self._near_another(chosen, candidates):
+        if (self._near_another(chosen, candidates) and not
+                self._distinct_face_match(chosen, candidates, detection)):
             self._lose("AMBIGUOUS_NEARBY_PERSON")
             return suppressed
         self._recovery_deadline = None
@@ -350,6 +423,38 @@ class PresenterLock:
             < max(32.0, 0.80 * max(chosen.width, other.width))
             for other in candidates
         )
+
+    def _distinct_face_match(self, chosen: PersonBox, candidates: list[PersonBox],
+                             detection: DetectionResult) -> bool:
+        """Continue a previously stable face despite overlapping body boxes.
+
+        This verifies proximity in IMAGE space, never biometric identity.
+        If a second face is not unambiguously separated, do not move.
+        """
+        if (self._locked_aim is None or self._locked_aim_source != "face" or
+                not isinstance(detection.aim_points, list) or
+                len(detection.aim_points) != len(candidates)):
+            return False
+        idx = next((i for i, box in enumerate(candidates) if box is chosen), -1)
+        if idx < 0:
+            return False
+        point = detection.aim_points[idx]
+        if not isinstance(point, dict) or point.get("source") != "face" or (
+                type(point.get("x")) is not int or type(point.get("y")) is not int):
+            return False
+        if hypot(point["x"] - self._locked_aim[0],
+                 point["y"] - self._locked_aim[1]) > 38:
+            return False
+        for i, other in enumerate(detection.aim_points):
+            if i == idx:
+                continue
+            if not isinstance(other, dict) or other.get("source") != "face" or (
+                    type(other.get("x")) is not int or type(other.get("y")) is not int):
+                return False
+            if hypot(point["x"] - other["x"], point["y"] - other["y"]) < max(
+                    60., detection.frame_width * .13):
+                return False
+        return True
 
     def select(self, index: int, frame_seq: int, *, now: float) -> tuple[bool, str]:
         if self.locked:

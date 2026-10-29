@@ -163,6 +163,7 @@ class CameraInferenceWorker(threading.Thread):
         camera_fps: int = 30,
         jpeg_quality: int = 80,
         camera_mjpeg: bool = False,
+        preview_every_n_frames: int = 1,
     ) -> None:
         super().__init__(name="camera-inference-dry-run", daemon=True)
         self.runtime = runtime
@@ -176,6 +177,10 @@ class CameraInferenceWorker(threading.Thread):
             raise ValueError("jpeg quality outside supported range")
         if not 5 <= camera_fps <= 60:
             raise ValueError("camera fps request outside supported range")
+        if type(preview_every_n_frames) is not int or not 1 <= preview_every_n_frames <= 10:
+            raise ValueError("invalid preview decimation")
+        self.preview_every_n_frames = preview_every_n_frames
+        self._completed_inferences = 0
         self.camera_width = camera_width
         self.camera_height = camera_height
         self.camera_fps = camera_fps
@@ -239,9 +244,14 @@ class CameraInferenceWorker(threading.Thread):
                                 "remote_infer_roundtrip_ms": round((returned_at - encoded_at) * 1000, 1),
                             })
                         self.runtime.process_detection(result, rtt_ms)
-                        publish = getattr(self.runtime, "publish_preview", None)
-                        if callable(publish):
-                            publish(frame, result)
+                        # Drawing and re-JPEG-encoding the operator preview
+                        # costs ~25ms/frame on Pi. Keep EVERY inference and
+                        # safety observation; throttle display work only.
+                        self._completed_inferences += 1
+                        if self._completed_inferences % self.preview_every_n_frames == 0:
+                            publish = getattr(self.runtime, "publish_preview", None)
+                            if callable(publish):
+                                publish(frame, result)
             except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
                 with self.runtime._guard:
                     self.runtime._last_event = "PC_LINK_ERROR_" + type(exc).__name__
