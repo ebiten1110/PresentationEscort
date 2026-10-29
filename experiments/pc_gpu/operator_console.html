@@ -37,12 +37,17 @@
           <div id="candidates"></div>
           <button id="release-target" class="quiet" disabled>選択解除</button>
         </div>
-        <p id="lock-message" class="small-text">人物が1人なら安定検出後に自動選択。人が複数なら候補を選んでください。</p>
+        <p id="lock-message" class="small-text">両手を頭より上に挙げて保持 → 対象を選択。手動で映像をクリックしても選べます。</p>
       </section>
       <section class="control-pane">
         <div class="pane-heading"><h2>追従コントロール</h2></div>
         <div class="current-mode"><small>モーター制御</small><span id="motor">未確認</span></div>
-        <button id="auto" class="primary" disabled>人物追従を開始</button>
+        <div class="gesture-controls">
+          <button id="gesture-on" class="primary" disabled>ジェスチャー追従を待機</button>
+          <button id="gesture-off" class="quiet" disabled>ジェスチャー待機を解除</button>
+        </div>
+        <p id="gesture-help" class="small-text">待機を有効にして、両手を頭より上に挙げて保持すると対象を選び追従を開始します。見失ったら停止し、新しいジェスチャーを待ちます。</p>
+        <button id="auto" class="secondary" disabled>手動でAUTOを開始</button>
         <button id="stop" class="secondary" disabled>停止 / SAFE</button>
         <button id="estop" class="emergency" disabled>緊急停止（ESTOP）</button>
         <button id="reset" class="quiet" disabled>緊急停止を解除する</button>
