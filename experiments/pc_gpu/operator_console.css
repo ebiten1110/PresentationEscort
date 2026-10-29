@@ -49,3 +49,13 @@ footer{font-size:10px;color:#8194ac;text-align:center}
 .gesture-controls button{font-size:13px}
 #gesture-help{color:#a8c8e7;line-height:1.35}
 @media(max-width:440px){.gesture-controls{grid-template-columns:1fr}}
+
+/* Physical RGB status LED is driven by ESP32; this is its reported intent. */
+.led-status strong{display:flex;gap:9px;align-items:center}
+.led-dot{width:16px;height:16px;flex-shrink:0;border-radius:50%;border:1px solid #869ab5;display:inline-block}
+.led-dot.red{background:#ed3555;box-shadow:0 0 11px #ed355599}
+.led-dot.yellow{background:#ffd535;box-shadow:0 0 11px #ffd53599}
+.led-dot.white{background:#f7f9fc;box-shadow:0 0 11px #ffffffaa}
+.status-strip{grid-template-columns:repeat(6,minmax(0,1fr))}
+@media(max-width:850px){.status-strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:550px){.status-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
