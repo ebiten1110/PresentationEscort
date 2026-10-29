@@ -197,6 +197,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
         # disarmed until explicit operator AUTO. Short loss still issues STOP.
         self.presenter = PresenterLock(auto_select_single=True, transient_recovery_s=0.9)
         self._preview_jpeg: Optional[bytes] = None
+        self._preview_resolution: Optional[str] = None
         # Superclass has not started any threads or issued any commands.
         self.sink.close()
         self.sink = HeadOnlySerialSink(
@@ -252,6 +253,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
         if ok:
             with self._guard:
                 self._preview_jpeg = encoded.tobytes()
+                self._preview_resolution = f"{width}x{height}"
 
     def get_preview(self) -> Optional[bytes]:
         with self._guard:
@@ -262,6 +264,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
             super().set_camera_state(active, connected)
             if not connected:
                 self._preview_jpeg = None
+                self._preview_resolution = None
 
     def _poll_loop(self) -> None:
         """Real UART reader: persist errors beyond the next presenter event."""
@@ -317,6 +320,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  "yaw_target_deg": round(follow.plan.yaw_target_deg, 1)}
                 if follow is not None else None
             )
+            status["camera_resolution"] = self._preview_resolution
             status["simulation"] = False
             status["uart_poll_error"] = self._uart_poll_error
             status["uart_last_safety_event"] = self.sink.last_safety_event
