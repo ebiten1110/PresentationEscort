@@ -51,10 +51,17 @@ class _SmoothHeadAiming:
     _pitch_gain_deg_per_px = 0.010
     _correction_limit_deg = 0.60
 
+    @staticmethod
+    def _validate_pitch_speed(speed_deg_s: float) -> None:
+        if not math.isfinite(speed_deg_s) or not 0.5 <= speed_deg_s <= 10.0:
+            raise ValueError("pitch speed must be between 0.5 and 10 deg/s")
+
     def _init_head_aiming(self, speed_deg_s: float) -> None:
         if not math.isfinite(speed_deg_s) or not 0.5 <= speed_deg_s <= 10.0:
             raise ValueError("head speed must be between 0.5 and 10 deg/s")
         self.head_speed_deg_s = speed_deg_s
+        self.pitch_speed_deg_s = speed_deg_s
+        self.invert_vertical = False
         self._smoothed_error_x: Optional[float] = None
         self._smoothed_error_y: Optional[float] = None
         self._aim_last_at: Optional[float] = None
@@ -122,17 +129,20 @@ class _SmoothHeadAiming:
         # If the image is mirrored for display, *only* yaw sign is swapped
         # before _filter_aim, as in the previously tested implementation.
         desired_pitch = max(self.pitch_min, min(self.pitch_max,
-            pitch_feedback + pitch_delta * HEAD_PITCH_IMAGE_DIRECTION))
+            pitch_feedback + pitch_delta * HEAD_PITCH_IMAGE_DIRECTION *
+            (-1.0 if self.invert_vertical else 1.0)))
         elapsed = (0.12 if previous_at is None
                    else max(0.0, now - previous_at))
         if previous_at is not None and elapsed + 1e-9 < self._send_interval_s:
             yaw, pitch, command = previous_yaw, previous_pitch, None
         else:
             # A camera stall must not turn the next packet into a huge jump.
-            max_step = self.head_speed_deg_s * min(elapsed, 0.20)
-            yaw = round(previous_yaw + max(-max_step, min(max_step,
+            max_elapsed = min(elapsed, 0.20)
+            yaw_step = self.head_speed_deg_s * max_elapsed
+            pitch_step = self.pitch_speed_deg_s * max_elapsed
+            yaw = round(previous_yaw + max(-yaw_step, min(yaw_step,
                                                          desired_yaw - previous_yaw)), 1)
-            pitch = round(previous_pitch + max(-max_step, min(max_step,
+            pitch = round(previous_pitch + max(-pitch_step, min(pitch_step,
                                                              desired_pitch - previous_pitch)), 1)
             changed = (previous_at is None or
                        abs(yaw - previous_yaw) >= 0.1 or
@@ -154,12 +164,18 @@ class HeadOnlyPlanner(_SmoothHeadAiming, V883PersonDualLoop):
 
     def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0,
                  invert_horizontal: bool = False,
-                 head_speed_deg_s: float = 3.0):
+                 invert_vertical: bool = False,
+                 head_speed_deg_s: float = 3.0,
+                 pitch_speed_deg_s: Optional[float] = None):
         super().__init__()
         self._init_head_aiming(head_speed_deg_s)
+        if pitch_speed_deg_s is not None:
+            self._validate_pitch_speed(pitch_speed_deg_s)
+            self.pitch_speed_deg_s = pitch_speed_deg_s
         self.pitch_min = pitch_min
         self.pitch_max = pitch_max
         self.invert_horizontal = invert_horizontal
+        self.invert_vertical = invert_vertical
 
     def step(self, target, *, now: float, **kwargs):
         if self.invert_horizontal:
@@ -189,15 +205,21 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
                  stable_frames: int = 4, settle_s: float = 1.0,
                  edge_fraction: float = 0.15,
                  invert_horizontal: bool = False,
-                 head_speed_deg_s: float = 3.0):
+                 invert_vertical: bool = False,
+                 head_speed_deg_s: float = 3.0,
+                 pitch_speed_deg_s: Optional[float] = None):
         super().__init__()
         self._init_head_aiming(head_speed_deg_s)
+        if pitch_speed_deg_s is not None:
+            self._validate_pitch_speed(pitch_speed_deg_s)
+            self.pitch_speed_deg_s = pitch_speed_deg_s
         self.pitch_min = pitch_min
         self.pitch_max = pitch_max
         self.stable_frames = stable_frames
         self.settle_s = settle_s
         self.edge_fraction = edge_fraction
         self.invert_horizontal = invert_horizontal
+        self.invert_vertical = invert_vertical
         self._turn_proposals = 0
         self._proposal_direction = None
 
@@ -427,7 +449,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  turn_settle_seconds: float = 1.0,
                  turn_edge_fraction: float = .15,
                  invert_horizontal: bool = False,
+                 invert_vertical: bool = False,
                  head_speed_deg_s: float = 2.0,
+                 pitch_speed_deg_s: Optional[float] = None,
                  capture_diagnostics: bool = False) -> None:
         if body_enabled and not head_enabled:
             raise ValueError("body turns require head control opt-in")
@@ -441,7 +465,10 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self._gesture_pending_event = 0
         self._gesture_pending_since = 0.0
         self.invert_horizontal = invert_horizontal
+        self.invert_vertical = invert_vertical
         self.head_speed_deg_s = head_speed_deg_s
+        self.pitch_speed_deg_s = (head_speed_deg_s if pitch_speed_deg_s is None
+                                  else pitch_speed_deg_s)
         self._preview_jpeg: Optional[bytes] = None
         self._preview_at: Optional[float] = None
         self._preview_resolution: Optional[str] = None
@@ -465,11 +492,15 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 settle_s=turn_settle_seconds,
                 edge_fraction=turn_edge_fraction,
                 invert_horizontal=invert_horizontal,
+                invert_vertical=invert_vertical,
                 head_speed_deg_s=head_speed_deg_s,
+                pitch_speed_deg_s=pitch_speed_deg_s,
             ) if body_enabled else HeadOnlyPlanner(
                 pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1],
                 invert_horizontal=invert_horizontal,
-                head_speed_deg_s=head_speed_deg_s)),
+                invert_vertical=invert_vertical,
+                head_speed_deg_s=head_speed_deg_s,
+                pitch_speed_deg_s=pitch_speed_deg_s)),
             enable_actuation=head_enabled,
         )
         self._feedback = Esp32FeedbackPoller(self.sink, self.controller)
@@ -734,7 +765,12 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  "body_sent": follow.body_sent,
                  "bearing_deg": round(follow.plan.body_bearing_deg, 1),
                  "body_command": follow.plan.body_command,
-                 "yaw_target_deg": round(follow.plan.yaw_target_deg, 1)}
+                 "yaw_target_deg": round(follow.plan.yaw_target_deg, 1),
+                 "pitch_target_deg": round(follow.plan.pitch_target_deg, 1),
+                 "pitch_aim_valid": follow.plan.pitch_tracking_enabled,
+                 "pitch_at_limit": (self.pitch_bounds != (0.0, 0.0) and
+                                    (abs(follow.plan.pitch_target_deg - self.pitch_bounds[0]) < .11
+                                     or abs(follow.plan.pitch_target_deg - self.pitch_bounds[1]) < .11))}
                 if follow is not None else None
             )
             status["camera_resolution"] = self._preview_resolution
@@ -784,19 +820,28 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status["head_only_test"] = self.head_enabled and not self.body_enabled
             status["body_motion_permitted"] = self.body_enabled
             status["pitch_tracking_enabled"] = self.pitch_bounds != (0.0, 0.0)
+            status["vertical_direction"] = ("REVERSED" if self.invert_vertical
+                                            else "LEGACY")
+            status["pitch_speed_limit_deg_s"] = self.pitch_speed_deg_s
             status["head_feedback_error"] = self._head_feedback_error()
             status["head_pitch_approved_range"] = list(self.pitch_bounds)
             status["head_speed_limit_deg_s"] = self.head_speed_deg_s
+            head_scope = "HEAD_YAW_3DEG"
+            if self.pitch_bounds != (0.0, 0.0):
+                head_scope += "_PITCH_CALIBRATED"
             status["actuation_scope"] = (
-                "HEAD_YAW_3DEG_AND_FEEDBACK_GATED_BODY_TURNS" if self.body_enabled
+                head_scope + "_AND_FEEDBACK_GATED_BODY_TURNS" if self.body_enabled
+                else head_scope if self.head_enabled and self.pitch_bounds != (0.0, 0.0)
                 else "HEAD_YAW_ONLY_3DEG" if self.head_enabled
                 else "MONITOR_ONLY"
             )
+            pitch_label = (f" / Pitch {self.pitch_bounds[0]:g}～{self.pitch_bounds[1]:g}°"
+                           if self.pitch_bounds != (0.0, 0.0) else "")
             status["servo_power_declared"] = self.power_declared
             status["motor_status"] = (
-                "ON申告・首Yaw±3°/左右旋回（動作完了待ち）"
+                "ON申告・首Yaw±3°" + pitch_label + " / 左右旋回（動作完了待ち）"
                 if self.body_enabled else
-                "ON申告・首Yaw±3°のみ" if self.head_enabled else
+                "ON申告・首Yaw±3°" + pitch_label if self.head_enabled else
                 "モーター指令無効（通電状態は未測定）"
             )
             status["auto_ready"] = bool(
@@ -915,6 +960,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 "esp32_head_feedback", "esp32_walking_feedback", "follow_debug",
                 "search_state", "head_speed_limit_deg_s", "pitch_tracking_enabled",
                 "head_feedback_error", "head_pitch_approved_range",
+                "pitch_speed_limit_deg_s", "vertical_direction",
             )
             snapshot = {key: state.get(key) for key in public_keys}
         return self._diagnostics.export(status=snapshot)
@@ -1008,6 +1054,8 @@ def main(argv: Optional[list[str]] = None) -> None:
                     help="Confirm pitch has been physically calibrated")
     ap.add_argument("--pitch-min-deg", type=float, default=None)
     ap.add_argument("--pitch-max-deg", type=float, default=None)
+    ap.add_argument("--reverse-vertical-direction", action="store_true",
+                    help="Reverse vertical servo aim direction after verifying actual motion; calibrated limits remain enforced")
     ap.add_argument("--turn-stable-frames", type=int, default=4)
     ap.add_argument("--turn-settle-seconds", type=float, default=1.0)
     ap.add_argument("--turn-edge-fraction", type=float, default=.15)
@@ -1018,6 +1066,8 @@ def main(argv: Optional[list[str]] = None) -> None:
                                  help="Reverse yaw sign only after a secured physical test")
     ap.add_argument("--head-speed-deg-per-second", type=float, default=2.0,
                     help="Maximum change in Pi head setpoint, default 2 deg/s")
+    ap.add_argument("--pitch-speed-deg-per-second", type=float, default=None,
+                    help="Optional independent vertical slew limit (0.5..10 deg/s); defaults to head speed")
     ap.add_argument("--bench-secured", action="store_true")
     ap.add_argument("--neutral-calibrated", action="store_true")
     ap.add_argument("--physical-cutoff-tested", action="store_true")
@@ -1044,6 +1094,14 @@ def main(argv: Optional[list[str]] = None) -> None:
         0.5 <= args.head_speed_deg_per_second <= 10.0
     ):
         ap.error("head speed must be between 0.5 and 10 deg/s")
+    if args.pitch_speed_deg_per_second is not None and (
+        not math.isfinite(args.pitch_speed_deg_per_second) or not
+        0.5 <= args.pitch_speed_deg_per_second <= 10.0
+    ):
+        ap.error("pitch speed must be between 0.5 and 10 deg/s")
+    if (args.pitch_speed_deg_per_second is not None or
+            args.reverse_vertical_direction) and not args.pitch_calibrated:
+        ap.error("independent pitch control requires physical pitch calibration")
     if not 5 <= args.camera_fps <= 60:
         ap.error("camera fps request must be 5..60")
     if args.enable_head_test and not args.servo_power_on:
@@ -1070,7 +1128,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         turn_settle_seconds=args.turn_settle_seconds,
         turn_edge_fraction=args.turn_edge_fraction,
         invert_horizontal=args.reverse_horizontal_direction,
+        invert_vertical=args.reverse_vertical_direction,
         head_speed_deg_s=args.head_speed_deg_per_second,
+        pitch_speed_deg_s=args.pitch_speed_deg_per_second,
         capture_diagnostics=args.capture_diagnostics,
     )
     worker = None

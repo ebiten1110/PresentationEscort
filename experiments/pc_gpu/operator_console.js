@@ -177,7 +177,7 @@
       const simulated = status.simulation !== false;
       const headOnly = !simulated && status.head_only_test === true;
       const modeLabel = simulated ? "仮想ESP32 / 実モーター出力なし"
-        : headOnly ? "実ESP32 / 首Yawのみ最大±3°"
+        : headOnly ? "実ESP32 / 首Yaw最大±3°（Pitchは校正済みの場合のみ）"
         : "実ESP32 / 監視のみ・駆動禁止";
       byId("motor").textContent = status.motor_status || modeLabel;
       byId("runtime-subtitle").textContent = simulated
@@ -222,7 +222,14 @@
       byId("follow-debug").textContent = follow
         ? fmt(follow.reason) + " / 首送信 " + fmt(follow.head_sent) +
           " / 本体送信 " + fmt(follow.body_sent) +
-          " / 方位 " + fmt(follow.bearing_deg) + "°"
+          " / 方位 " + fmt(follow.bearing_deg) + "°" +
+          (status.pitch_tracking_enabled
+            ? " / 上下目標 " + fmt(follow.pitch_target_deg) + "°" +
+              "（実測報告 " + fmt(head && head.pitch_deg) + "°、速度上限 " +
+              fmt(status.pitch_speed_limit_deg_s) + "°/秒）" +
+              (follow.pitch_at_limit ? " / 上下可動域の端" : "") +
+              (!follow.pitch_aim_valid ? " / 顔位置の信頼性不足で上下保持" : "")
+            : " / 上下追従OFF")
         : "人物ロック後のデータ待ち";
       byId("motion-diagnosis").textContent =
         status.simulation !== false ? "仮想ESP32" :
