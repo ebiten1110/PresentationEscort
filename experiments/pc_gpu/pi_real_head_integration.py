@@ -1,7 +1,7 @@
 """Controlled Pi camera -> PC YOLO -> presenter lock -> REAL ESP32 bridge.
 
 Default: read-only UART monitor (servo power may be ON; no software ARM).
-Opt-in, supervised: head yaw <=3 degrees around verified neutral, pitch zero.
+Opt-in, supervised: head yaw <=3 degrees. Pitch zero unless calibrated.
 Body tracking turns require separate opt-in and calibration, with no session turn-count cap.
 No translation or automatic ARM on startup/re-connection.
 Power/physical ESTOP status is operator-declared, not measured by software.
@@ -30,29 +30,30 @@ _POSE = re.compile(r"^HEAD_POSE_SET:([-+]?\d+(?:\.\d+)?),([-+]?\d+(?:\.\d+)?)$")
 
 
 class HeadOnlyPlanner(V883PersonDualLoop):
-    """Limit the planner's INTERNAL state, not only its returned proposal."""
+    """Limit the planner's internal state, optionally using calibrated pitch."""
+
+    def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0):
+        super().__init__()
+        self.pitch_min = pitch_min
+        self.pitch_max = pitch_max
 
     def step(self, *args, **kwargs):
-        # The V8.8 planner proposes full-range body motions. Never retain
-        # or forward these proposals to the head-only real actuator mode.
         plan = super().step(*args, **kwargs)
         self.yaw_target_deg = max(-3.0, min(3.0, self.yaw_target_deg))
-        self.pitch_target_deg = 0.0
+        self.pitch_target_deg = max(self.pitch_min, min(self.pitch_max, self.pitch_target_deg))
         self.body_candidate = None
         self.body_candidate_count = 0
         self.motion_pending = False
         if plan.head_pose_command is not None:
             self.last_sent_yaw = self.yaw_target_deg
-            self.last_sent_pitch = 0.0
-            head_command = f"HEAD_POSE_SET:{self.yaw_target_deg:.1f},0.0"
+            self.last_sent_pitch = self.pitch_target_deg
+            head_command = f"HEAD_POSE_SET:{self.yaw_target_deg:.1f},{self.pitch_target_deg:.1f}"
         else:
             head_command = None
-        return replace(
-            plan, body_command=None, suggested_body_turn=None,
-            yaw_target_deg=self.yaw_target_deg,
-            pitch_target_deg=0.0,
-            head_pose_command=head_command,
-        )
+        return replace(plan, body_command=None, suggested_body_turn=None,
+                       yaw_target_deg=self.yaw_target_deg,
+                       pitch_target_deg=self.pitch_target_deg,
+                       head_pose_command=head_command)
 
 
 class HeadBodyTurnPlanner(V883PersonDualLoop):
@@ -209,7 +210,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 stable_frames=turn_stable_frames,
                 settle_s=turn_settle_seconds,
                 edge_fraction=turn_edge_fraction
-            ) if body_enabled else HeadOnlyPlanner()),
+            ) if body_enabled else HeadOnlyPlanner(
+                pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1])),
             enable_actuation=head_enabled,
         )
         self._feedback = Esp32FeedbackPoller(self.sink, self.controller)
