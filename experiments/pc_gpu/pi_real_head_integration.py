@@ -56,18 +56,68 @@ class HeadOnlyPlanner(V883PersonDualLoop):
 
 
 class HeadBodyTurnPlanner(V883PersonDualLoop):
-    """Repeated turns subject to ESP32 idle and head feedback, not a session quota."""
-    def step(self, *args, **kwargs):
-        plan = super().step(*args, **kwargs)
+    """Measured-feedback turns with visual confirmation, no session turn quota."""
+
+    def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0,
+                 stable_frames: int = 4, settle_s: float = 1.0,
+                 edge_fraction: float = 0.24):
+        super().__init__()
+        self.pitch_min = pitch_min
+        self.pitch_max = pitch_max
+        self.stable_frames = stable_frames
+        self.settle_s = settle_s
+        self.edge_fraction = edge_fraction
+        self._turn_proposals = 0
+        self._proposal_direction = None
+
+    def motion_completed(self, now: float, command: str) -> None:
+        super().motion_completed(now, command)
+        self._turn_proposals = 0
+        self._proposal_direction = None
+
+    def step(self, target, *, now, **kwargs):
+        plan = super().step(target, now=now, **kwargs)
         self.yaw_target_deg = max(-3.0, min(3.0, self.yaw_target_deg))
-        self.pitch_target_deg = 0.0
+        self.pitch_target_deg = max(self.pitch_min, min(self.pitch_max, self.pitch_target_deg))
         head_command = None
         if plan.head_pose_command is not None:
             self.last_sent_yaw = self.yaw_target_deg
-            self.last_sent_pitch = 0.0
-            head_command = f"HEAD_POSE_SET:{self.yaw_target_deg:.1f},0.0"
+            self.last_sent_pitch = self.pitch_target_deg
+            head_command = f"HEAD_POSE_SET:{self.yaw_target_deg:.1f},{self.pitch_target_deg:.1f}"
+        body_command = plan.body_command
+        reason = plan.reason
+        if body_command is not None:
+            normalized_error = abs(target.error_x) / float(target.frame_width)
+            settled = (self.last_turn_completed_at is None or
+                       now - self.last_turn_completed_at >= self.settle_s)
+            if normalized_error < self.edge_fraction or not settled:
+                reason = "BODY_WAIT_TARGET_EDGE_OR_SETTLING"
+                body_command = None
+                self._turn_proposals = 0
+                self._proposal_direction = None
+            else:
+                if body_command == self._proposal_direction:
+                    self._turn_proposals += 1
+                else:
+                    self._proposal_direction = body_command
+                    self._turn_proposals = 1
+                if self._turn_proposals < self.stable_frames:
+                    reason = "BODY_WAIT_STABLE_DIRECTION"
+                    body_command = None
+                else:
+                    self._turn_proposals = 0
+                    self._proposal_direction = None
+            if body_command is None:
+                # The base planner assumes a proposal was sent; clear that
+                # flag when our stabilizer withheld it. No motion was issued.
+                self.motion_pending = False
+        elif not kwargs.get("head_feedback_fresh", False):
+            self._turn_proposals = 0
+            self._proposal_direction = None
         return replace(plan, yaw_target_deg=self.yaw_target_deg,
-                       pitch_target_deg=0.0, head_pose_command=head_command)
+                       pitch_target_deg=self.pitch_target_deg,
+                       head_pose_command=head_command, body_command=body_command,
+                       reason=reason)
 
 
 class HeadOnlySerialSink:
@@ -75,10 +125,13 @@ class HeadOnlySerialSink:
     requires_firmware_safety = True
 
     def __init__(self, port: str, *, head_enabled: bool,
-                 body_enabled: bool = False):
+                 body_enabled: bool = False, pitch_min: float = 0.,
+                 pitch_max: float = 0.):
         self._inner = SerialCommandSink(port)
         self.head_enabled = head_enabled
         self.body_enabled = body_enabled
+        self.pitch_min = pitch_min
+        self.pitch_max = pitch_max
         self._serial_partial = ""
         self.last_safety_event: Optional[str] = None
         self.last_servo_diagnostic: Optional[str] = None
@@ -94,7 +147,7 @@ class HeadOnlySerialSink:
             yaw, pitch = float(pose[1]), float(pose[2])
             if (not self.head_enabled or not math.isfinite(yaw)
                     or not math.isfinite(pitch) or abs(yaw) > 3.0
-                    or abs(pitch) > 0.001):
+                    or not self.pitch_min - .001 <= pitch <= self.pitch_max + .001):
                 raise ValueError("head motion beyond calibrated head-only test scope")
         elif cmd.startswith("HEAD_"):
             # HEAD_STATUS read-only is allowed; all other head variants blocked.
@@ -131,7 +184,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
     """Reuse real V2 presenter-lock logic and safety gateway without a virtual MCU."""
 
     def __init__(self, serial_port: str, *, head_enabled: bool = False,
-                 power_declared: str = "UNKNOWN", body_enabled: bool = False) -> None:
+                 power_declared: str = "UNKNOWN", body_enabled: bool = False,
+                 pitch_bounds: tuple[float, float] = (0.0, 0.0),
+                 turn_stable_frames: int = 4,
+                 turn_settle_seconds: float = 1.0,
+                 turn_edge_fraction: float = .24) -> None:
         if body_enabled and not head_enabled:
             raise ValueError("body turns require head control opt-in")
         super().__init__()
@@ -142,16 +199,23 @@ class LockedRealRuntime(LockedSimulationRuntime):
         # Superclass has not started any threads or issued any commands.
         self.sink.close()
         self.sink = HeadOnlySerialSink(
-            serial_port, head_enabled=head_enabled, body_enabled=body_enabled)
+            serial_port, head_enabled=head_enabled, body_enabled=body_enabled,
+            pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1])
         self.gateway = PiMotionGateway(self.sink)
         self.controller = RemotePersonController(
             self.gateway,
-            planner=(HeadBodyTurnPlanner() if body_enabled else HeadOnlyPlanner()),
+            planner=(HeadBodyTurnPlanner(
+                pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1],
+                stable_frames=turn_stable_frames,
+                settle_s=turn_settle_seconds,
+                edge_fraction=turn_edge_fraction
+            ) if body_enabled else HeadOnlyPlanner()),
             enable_actuation=head_enabled,
         )
         self._feedback = Esp32FeedbackPoller(self.sink, self.controller)
         self.head_enabled = head_enabled
         self.body_enabled = body_enabled
+        self.pitch_bounds = pitch_bounds
         self.power_declared = power_declared
         self._last_event = "REAL_UART_READY_HEAD_DISABLED" if not head_enabled else "REAL_HEAD_TEST_READY"
         self._uart_poll_error: Optional[str] = None
@@ -268,6 +332,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status["simulated_esp32"] = False
             status["head_only_test"] = self.head_enabled and not self.body_enabled
             status["body_motion_permitted"] = self.body_enabled
+            status["pitch_tracking_enabled"] = self.pitch_bounds != (0.0, 0.0)
             status["actuation_scope"] = (
                 "HEAD_YAW_3DEG_AND_FEEDBACK_GATED_BODY_TURNS" if self.body_enabled
                 else "HEAD_YAW_ONLY_3DEG" if self.head_enabled
@@ -346,6 +411,13 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--enable-body-turns", action="store_true",
                     help="Repeated body turns gated by fresh ESP32 idle feedback")
     ap.add_argument("--body-turn-calibrated", action="store_true")
+    ap.add_argument("--pitch-calibrated", action="store_true",
+                    help="Confirm pitch has been physically calibrated")
+    ap.add_argument("--pitch-min-deg", type=float, default=None)
+    ap.add_argument("--pitch-max-deg", type=float, default=None)
+    ap.add_argument("--turn-stable-frames", type=int, default=4)
+    ap.add_argument("--turn-settle-seconds", type=float, default=1.0)
+    ap.add_argument("--turn-edge-fraction", type=float, default=.24)
     ap.add_argument("--bench-secured", action="store_true")
     ap.add_argument("--neutral-calibrated", action="store_true")
     ap.add_argument("--physical-cutoff-tested", action="store_true")
@@ -354,6 +426,20 @@ def main(argv: Optional[list[str]] = None) -> None:
         ap.error("Body turns require --enable-head-test")
     if args.enable_body_turns and not args.body_turn_calibrated:
         ap.error("Body turns require verified body-turn calibration")
+    if (args.pitch_min_deg is not None or args.pitch_max_deg is not None
+            or args.pitch_calibrated):
+        if not args.enable_head_test or not args.pitch_calibrated:
+            ap.error("pitch requires explicit enable-head-test and pitch calibration")
+        if args.pitch_min_deg is None or args.pitch_max_deg is None:
+            ap.error("pitch requires both physically calibrated min/max angles")
+        if not (-12.0 <= args.pitch_min_deg <= 0.0 <=
+                args.pitch_max_deg <= 12.0 and
+                args.pitch_min_deg < args.pitch_max_deg):
+            ap.error("pitch min/max outside firmware range or do not contain neutral")
+    if args.turn_stable_frames < 2 or not 0 <= args.turn_settle_seconds <= 10:
+        ap.error("invalid turn stability/settling settings")
+    if not 0.05 <= args.turn_edge_fraction <= .45:
+        ap.error("turn edge fraction must be in .05 .. .45")
     if args.enable_head_test and not args.servo_power_on:
         ap.error("Head motor test requires explicitly declared servo V+ ON")
     if args.enable_head_test and not (
@@ -373,6 +459,10 @@ def main(argv: Optional[list[str]] = None) -> None:
         head_enabled=args.enable_head_test,
         body_enabled=args.enable_body_turns,
         power_declared="ON_OPERATOR_DECLARED" if args.servo_power_on else "OFF_OPERATOR_DECLARED",
+        pitch_bounds=(args.pitch_min_deg or 0., args.pitch_max_deg or 0.),
+        turn_stable_frames=args.turn_stable_frames,
+        turn_settle_seconds=args.turn_settle_seconds,
+        turn_edge_fraction=args.turn_edge_fraction,
     )
     worker = None
     server = None
