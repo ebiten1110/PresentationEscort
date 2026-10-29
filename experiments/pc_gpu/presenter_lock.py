@@ -25,9 +25,18 @@ class PresenterLock:
     CONFIDENCE_MIN = 0.45
 
     def __init__(self, *, auto_select_single: bool = False,
-                 transient_recovery_s: float = 0.0) -> None:
+                 transient_recovery_s: float = 0.0,
+                 gesture_enabled: bool = False,
+                 gesture_confirm_frames: int = 4) -> None:
         if not 0.0 <= transient_recovery_s <= 2.0:
             raise ValueError("invalid transient recovery window")
+        if not 2 <= gesture_confirm_frames <= 30:
+            raise ValueError("gesture confirmation frames invalid")
+        self.gesture_enabled = bool(gesture_enabled)
+        self.gesture_confirm_frames = gesture_confirm_frames
+        self.gesture_event_id = 0
+        self._gesture_candidate: Optional[PersonBox] = None
+        self._gesture_streak = 0
         self.auto_select_single = bool(auto_select_single)
         self.transient_recovery_s = transient_recovery_s
         self._single_candidate_streak = 0
@@ -50,6 +59,8 @@ class PresenterLock:
         self._frame_size = None
         self.candidates = []
         self._history.clear()
+        self._gesture_candidate = None
+        self._gesture_streak = 0
         self._single_candidate_streak = 0
         self._candidate_last = None
         self._recovery_deadline = None
@@ -57,6 +68,8 @@ class PresenterLock:
 
     def clear(self, reason: str = "OPERATOR_SELECTION_REQUIRED") -> None:
         self._locked = None
+        self._gesture_candidate = None
+        self._gesture_streak = 0
         self.locked = False
         self.state = "UNLOCKED"
         self.reason = reason
@@ -65,6 +78,8 @@ class PresenterLock:
 
     def _lose(self, reason: str) -> None:
         self._locked = None
+        self._gesture_candidate = None
+        self._gesture_streak = 0
         self.locked = False
         self.state = "LOST"
         self.reason = reason
@@ -127,13 +142,40 @@ class PresenterLock:
                 return suppressed
             candidates.append(box)
         self.candidates = candidates
+        self._last_gestures = detection.gesture_indices if isinstance(detection.gesture_indices, list) else []
         self._history[self._last_seq] = (now, list(candidates))
         self._history = {
             seq: item for seq, item in self._history.items()
             if now - item[0] <= self.MAX_FRAME_AGE_S
         }
         if not self.locked or self._locked is None:
-            if self.auto_select_single and len(candidates) == 1:
+            if self.gesture_enabled:
+                gestures = detection.gesture_indices
+                index = gestures[0] if (isinstance(gestures, list)
+                         and len(gestures) == 1 and type(gestures[0]) is int
+                         and 0 <= gestures[0] < len(candidates)) else None
+                proposed = candidates[index] if index is not None else None
+                # No selection if another person is too close to disambiguate.
+                if proposed is not None and self._near_another(proposed, candidates):
+                    proposed = None
+                previous = self._gesture_candidate
+                stable = proposed is not None and previous is not None and (
+                    abs(proposed.cx - previous.cx) <= max(15., previous.width * .30)
+                    and abs(proposed.cy - previous.cy) <= max(15., previous.height * .30)
+                    and .70 <= proposed.width / previous.width <= 1.45)
+                self._gesture_streak = (self._gesture_streak + 1) if stable else (1 if proposed else 0)
+                self._gesture_candidate = proposed
+                self.reason = "HANDS_OVER_HEAD_CONFIRMING" if proposed else "WAIT_BOTH_HANDS_OVER_HEAD"
+                if proposed is None or self._gesture_streak < self.gesture_confirm_frames:
+                    return suppressed
+                self._locked = proposed
+                self.locked = True
+                self.state = "TRACKING"
+                self.reason = "GESTURE_SELECTED_PRESENTATION_TARGET"
+                self.gesture_event_id += 1
+                self._gesture_candidate = None
+                self._gesture_streak = 0
+            elif self.auto_select_single and len(candidates) == 1:
                 candidate = candidates[0]
                 previous = self._candidate_last
                 near = (previous is not None and
@@ -189,9 +231,21 @@ class PresenterLock:
         self._locked = chosen
         self.state = "TRACKING"
         self.reason = "LOCKED_GEOMETRY_ONLY"
+        chosen_index = next((i for i, box in enumerate(candidates) if box is chosen), -1)
+        face_x = round(chosen.cx)
+        face_y = round(chosen.cy)
+        if (chosen_index >= 0 and isinstance(detection.aim_points, list)
+                and chosen_index < len(detection.aim_points)):
+            aim = detection.aim_points[chosen_index]
+            if (isinstance(aim, dict) and type(aim.get("x")) is int
+                    and type(aim.get("y")) is int
+                    and chosen.x1 <= aim["x"] <= chosen.x2
+                    and chosen.y1 <= aim["y"] <= chosen.y2):
+                face_x, face_y = aim["x"], aim["y"]
         return replace(
             detection, found=True, center_x=round(chosen.cx),
-            center_y=round(chosen.cy), width=chosen.width,
+            center_y=round(chosen.cy), aim_x=face_x, aim_y=face_y,
+            width=chosen.width,
             height=chosen.height, confidence=chosen.confidence,
             class_id=0, class_name="person",
         )
@@ -253,6 +307,9 @@ class PresenterLock:
         return {
             "lock_state": self.state if recent else "NO_FRESH_FRAME",
             "lock_reason": self.reason,
+            "gesture_enabled": self.gesture_enabled,
+            "gesture_event_id": self.gesture_event_id,
+            "gesture_hint": "両手を頭の上に挙げて、そのまま保持",
             "presenter_selected": self.locked and recent and self.state in ("TRACKING", "SELECTED_WAIT_NEXT_FRAME"),
             "selected_index": next(
                 (i for i, box in enumerate(self.candidates)
@@ -269,7 +326,10 @@ class PresenterLock:
                  "y2_percent": round(box.y2 / fh * 100, 2),
                  "x_percent": round(box.cx / fw * 100),
                  "y_percent": round(box.cy / fh * 100),
-                 "confidence": round(box.confidence, 2)}
+                 "confidence": round(box.confidence, 2),
+                 "gesturing": bool(self.gesture_enabled and
+                    isinstance(getattr(self, "_last_gestures", None), list)
+                    and i in self._last_gestures)}
                 for i, box in enumerate(self.candidates)
             ] if recent else [],
         }
