@@ -262,6 +262,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
             boxes = list(self.presenter.candidates)
             state = view["lock_state"]
             follow = getattr(self, "_last_cycle", None)
+            drive_mode = self.gateway.status().safety.mode
             last_aim = getattr(self, "_last_camera_aim", None)
             last_seen_at = getattr(self, "_last_camera_aim_at", 0.)
         img = frame.copy()
@@ -305,12 +306,23 @@ class LockedRealRuntime(LockedSimulationRuntime):
             cv2.circle(img, (aim_x, aim_y), 9, (25, 172, 255), 3, cv2.LINE_AA)
             cv2.arrowedLine(img, (aim_x, aim_y), (cx, cy),
                             (35, 185, 255), 2, cv2.LINE_AA, tipLength=.09)
-            zone = "BODY TURN" if abs(dx) >= turn_threshold_px else "HEAD YAW"
-            if abs(dx) < width*.035 and abs(dy) < height*.06:
-                zone = "CENTERED"
-            if follow is not None and follow.body_sent:
+            # Display what the controller can actually do, not simply a
+            # geometric zone. SAFE must never be labelled as moving.
+            if drive_mode != Mode.AUTO:
+                zone = "SAFE / NO MOTION"
+            elif follow is not None and follow.body_sent:
                 zone = "BODY TURN SENT"
-            heading = f"{zone}  {source}  dx:{dx:+d}px  dy:{dy:+d}px"
+            elif follow is not None and follow.plan.reason == "WAIT_ESP32_IDLE_CONFIRMATION":
+                zone = "BODY TURN IN PROGRESS"
+            elif (abs(dx) >= turn_threshold_px and follow is not None
+                  and abs(follow.plan.yaw_target_deg) >= 2.5):
+                zone = "BODY TURN PREPARING"
+            elif abs(dx) < width*.035 and abs(dy) < height*.06:
+                zone = "CENTERED"
+            else:
+                zone = "HEAD AIM"
+            screen_side = "RIGHT" if dx > 0 else "LEFT" if dx < 0 else "CENTER"
+            heading = f"{zone} | {source} | SCREEN {screen_side} | dx:{dx:+d}px dy:{dy:+d}px"
         elif state in ("LOST", "TEMPORARILY_LOST") and last_aim is not None and now-last_seen_at < 3.:
             lx, ly = last_aim
             direction = "RIGHT" if lx > cx else "LEFT" if lx < cx else "CENTER"
