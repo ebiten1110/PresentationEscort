@@ -9,6 +9,9 @@
   let holding = null;
   let lastLockState = "UNLOCKED";
   let currentCandidatesKey = "";
+  let lastStatus = null;
+  let previewBusy = false;
+  let previewObjectUrl = null;
   const byId = id => document.getElementById(id);
   const controls = ["auto", "manual", "stop", "left", "right", "estop", "reset"];
   const fmt = val => (val === null || val === undefined) ? "—" : String(val);
@@ -65,6 +68,33 @@
     }
   }
 
+  async function updatePreview() {
+    if (!connection || previewBusy) return;
+    previewBusy = true;
+    try {
+      const response = await fetch("/api/preview.jpg", {
+        cache: "no-store", credentials: "omit",
+        headers: {"Authorization": "Bearer " + token}
+      });
+      if (response.ok && response.headers.get("Content-Type")?.includes("image/jpeg")) {
+        const blob = await response.blob();
+        const nextUrl = URL.createObjectURL(blob);
+        const previous = previewObjectUrl;
+        previewObjectUrl = nextUrl;
+        const img = byId("camera-preview");
+        img.src = nextUrl;
+        byId("video-frame").classList.add("has-preview");
+        if (previous) URL.revokeObjectURL(previous);
+      } else if (response.status === 404) {
+        byId("video-frame").classList.remove("has-preview");
+      }
+    } catch (_) {
+      byId("video-frame").classList.remove("has-preview");
+    } finally {
+      previewBusy = false;
+    }
+  }
+
   function updateCandidates(status) {
     const area = byId("candidates");
     const candidates = Array.isArray(status.candidates) ? status.candidates : [];
@@ -75,7 +105,11 @@
     if (key === currentCandidatesKey) return;
     currentCandidatesKey = key;
     area.replaceChildren();
-    byId("lock-state").textContent = lockName;
+    byId("lock-state").textContent =
+      lockName === "TRACKING" ? "追従対象を選択済み" :
+      lockName === "TEMPORARILY_LOST" ? "一時見失い・停止中" :
+      lockName === "LOST" ? "見失い・再選択待ち" :
+      lockName === "UNLOCKED" ? "候補を探しています" : lockName;
     byId("release-target").disabled =
       !status.presenter_selected || status.mode !== "SAFE";
     if (!candidates.length) {
@@ -87,7 +121,8 @@
     for (const candidate of candidates) {
       const button = document.createElement("button");
       button.textContent =
-        "候補 " + (candidate.index + 1) +
+        (candidate.index === status.selected_index ? "● 追従対象 " : "候補 ") +
+        (candidate.index + 1) +
         "（左右 " + candidate.x_percent + "% / 上下 " +
         candidate.y_percent + "% / 信頼度 " +
         Math.round(candidate.confidence * 100) + "%）";
@@ -104,6 +139,7 @@
     if (!connection) return;
     try {
       const status = await call("/api/status");
+      lastStatus = status;
       currentMode = status.mode;
       byId("mode").textContent = status.mode;
       byId("pc").textContent = status.pc_connected ? "接続中" : "未接続";
@@ -185,7 +221,7 @@
       byId("reset").disabled = status.mode !== "ESTOP";
       ["left", "right"].forEach(id => byId(id).disabled = status.mode !== "MANUAL" || !simulated);
       updateCandidates(status);
-      byId("auth-message").textContent = simulated ? "認証済み｜DRY RUN" : "認証済み｜実ESP32";
+      byId("auth-message").textContent = simulated ? "接続中（仮想）" : "接続中（実機）";
     } catch (err) {
       byId("auth-message").textContent = "更新に失敗: " + err.message;
     }
@@ -239,12 +275,35 @@
     try {
       await call("/api/status");
       connection = true;
+      document.body.classList.add("authorized");
       byId("token").value = "";
+      updatePreview();
       await refresh();
     } catch (err) {
       connection = false;
       byId("auth-message").textContent = err.message;
     }
   });
+  byId("camera-preview").addEventListener("click", event => {
+    if (!lastStatus || lastStatus.mode !== "SAFE" || lastStatus.presenter_selected) return;
+    const img = byId("camera-preview");
+    const rect = img.getBoundingClientRect();
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    const scale = Math.min(rect.width / img.naturalWidth, rect.height / img.naturalHeight);
+    const displayWidth = img.naturalWidth * scale;
+    const displayHeight = img.naturalHeight * scale;
+    const x = (event.clientX - rect.left - (rect.width - displayWidth) / 2) / displayWidth * 100;
+    const y = (event.clientY - rect.top - (rect.height - displayHeight) / 2) / displayHeight * 100;
+    if (!(x >= 0 && x <= 100 && y >= 0 && y <= 100)) return;
+    const matches = (lastStatus.candidates || []).filter(box =>
+      x >= box.x1_percent && x <= box.x2_percent &&
+      y >= box.y1_percent && y <= box.y2_percent);
+    if (matches.length === 1) {
+      targetAction({index: matches[0].index, frame_seq: lastStatus.frame_seq});
+    } else if (matches.length > 1) {
+      byId("lock-message").textContent = "重なった人物を判別できません。候補一覧から選択してください。";
+    }
+  });
   window.setInterval(refresh, 450);
+  window.setInterval(updatePreview, 300);
 })();
