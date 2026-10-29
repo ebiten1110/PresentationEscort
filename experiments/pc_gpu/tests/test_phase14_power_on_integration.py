@@ -145,7 +145,9 @@ class RealPowerOnTests(unittest.TestCase):
         self.select(r)
         self.assertTrue(r.action("auto")["ok"])
         until(lambda: r.status()["mode"] == "AUTO")
-        for seq in range(6, 100):
+        # Slower neck setpoints and body settling deliberately lengthen each
+        # turn cycle; the important invariant is no session turn-count cap.
+        for seq in range(6, 180):
             r.process_detection(frame(seq), 65.)
             time.sleep(.04)
             if len([c for c in self.uart.commands if c in ("TRACK_LEFT", "TRACK_RIGHT")]) >= 3:
@@ -321,10 +323,14 @@ class PlannerTests(unittest.TestCase):
                        head_feedback_fresh=False, body_idle=False)
         self.assertIsNone(first.body_command)
         commands = []
+        # MCU feedback follows the preceding commanded neck angle. A body
+        # turn must wait for the head to reach its boundary at the new speed.
+        measured_yaw = first.yaw_target_deg
         for i in range(1, 22):
             decision = p.step(target, now=10.0 + i * .10,
-                              head_yaw_feedback_deg=0.,
+                              head_yaw_feedback_deg=measured_yaw,
                               head_feedback_fresh=True, body_idle=True)
+            measured_yaw = decision.yaw_target_deg
             if decision.body_command:
                 commands.append(decision.body_command)
                 break

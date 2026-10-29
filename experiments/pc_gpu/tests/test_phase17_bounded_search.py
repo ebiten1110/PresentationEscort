@@ -33,7 +33,8 @@ class SearchTests(unittest.TestCase):
         self.addCleanup(serial_patch.stop)
         self.runtime = LockedRealRuntime(
             "mock-ch340", head_enabled=True, body_enabled=True,
-            turn_stable_frames=100, power_declared="ON_OPERATOR_DECLARED")
+            turn_stable_frames=100, head_speed_deg_s=10.,
+            power_declared="ON_OPERATOR_DECLARED")
         self.addCleanup(self.runtime.close)
         self.runtime.start()
         self.assertTrue(self.runtime.action("gesture_on")["ok"])
@@ -45,7 +46,9 @@ class SearchTests(unittest.TestCase):
         until(lambda: self.runtime.status()["mode"] == "AUTO")
         for seq in range(8, 12):
             self.runtime.process_detection(frame(seq), 65.)
-            time.sleep(.03)
+            # The loss-search tests start at the already-reached head edge;
+            # allow enough time for command rate limiting to get there.
+            time.sleep(.12)
         until(lambda: self.runtime.controller.telemetry.snapshot().body_idle_confirmed)
         self.assertGreaterEqual(abs(self.runtime._last_cycle.plan.yaw_target_deg), 2.5)
 

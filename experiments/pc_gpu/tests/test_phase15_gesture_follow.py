@@ -223,11 +223,17 @@ class GestureAutoRuntimeTests(unittest.TestCase):
             class_name="person", frame_width=320, frame_height=240,
         ))
         planner = HeadBodyTurnPlanner(invert_horizontal=True)
-        plans = [
-            planner.step(target, now=1.+i*.10, head_yaw_feedback_deg=0.,
-                         head_feedback_fresh=True, body_idle=True)
-            for i in range(20)
-        ]
+        plans = []
+        # Report the actual preceding head position; a physical body turn
+        # must not be proposed while the rate-limited neck is still slewing.
+        measured_yaw = 0.
+        for i in range(25):
+            plan = planner.step(target, now=1.+i*.10,
+                                head_yaw_feedback_deg=measured_yaw,
+                                head_feedback_fresh=True, body_idle=True)
+            plans.append(plan)
+            measured_yaw = plan.yaw_target_deg
+        self.assertTrue(all(p.body_command is None for p in plans[:7]))
         self.assertTrue(any(p.body_command for p in plans))
         self.assertTrue(all(p.target_found for p in plans))
 

@@ -31,45 +31,109 @@ from v883_person_dual_loop import V883PersonDualLoop
 _POSE = re.compile(r"^HEAD_POSE_SET:([-+]?\d+(?:\.\d+)?),([-+]?\d+(?:\.\d+)?)$")
 
 
-class HeadOnlyPlanner(V883PersonDualLoop):
+class _SmoothHeadAiming:
+    """Rate-limit head setpoints on the Pi; never change firmware safety gates.
+
+    The firmware can move 1 degree every 30 ms. We instead send small,
+    time-bounded setpoint changes so a large face error cannot jerk the head.
+    This is a command rate limit, not physical shaft-speed telemetry.
+    """
+
+    _send_interval_s = 0.10
+    _aim_alpha = 0.40
+
+    def _init_head_aiming(self, speed_deg_s: float) -> None:
+        if not math.isfinite(speed_deg_s) or not 0.5 <= speed_deg_s <= 10.0:
+            raise ValueError("head speed must be between 0.5 and 10 deg/s")
+        self.head_speed_deg_s = speed_deg_s
+        self._smoothed_error_x: Optional[float] = None
+        self._smoothed_error_y: Optional[float] = None
+
+    def _filter_aim(self, target):
+        if self._smoothed_error_x is None:
+            self._smoothed_error_x = float(target.error_x)
+            self._smoothed_error_y = float(target.error_y)
+        else:
+            alpha = self._aim_alpha
+            self._smoothed_error_x += alpha * (target.error_x - self._smoothed_error_x)
+            self._smoothed_error_y += alpha * (target.error_y - self._smoothed_error_y)
+        return replace(target, error_x=round(self._smoothed_error_x),
+                       error_y=round(self._smoothed_error_y))
+
+    def target_lost(self):
+        # Never steer on remembered / interpolated pixels after a dropout.
+        self._smoothed_error_x = None
+        self._smoothed_error_y = None
+        return super().target_lost()
+
+    def _limit_head_command(self, plan, *, now: float, previous: tuple):
+        previous_yaw, previous_pitch, previous_at, previous_sent_yaw, previous_sent_pitch = previous
+        desired_yaw = max(-3.0, min(3.0, self.yaw_target_deg))
+        desired_pitch = max(self.pitch_min, min(self.pitch_max, self.pitch_target_deg))
+        elapsed = (0.12 if previous_at is None
+                   else max(0.0, now - previous_at))
+        if previous_at is not None and elapsed + 1e-9 < self._send_interval_s:
+            yaw, pitch, command = previous_yaw, previous_pitch, None
+        else:
+            # A camera stall must not turn the next packet into a huge jump.
+            max_step = self.head_speed_deg_s * min(elapsed, 0.20)
+            yaw = round(previous_yaw + max(-max_step, min(max_step,
+                                                         desired_yaw - previous_yaw)), 1)
+            pitch = round(previous_pitch + max(-max_step, min(max_step,
+                                                             desired_pitch - previous_pitch)), 1)
+            changed = (previous_at is None or
+                       abs(yaw - previous_yaw) >= 0.1 or
+                       abs(pitch - previous_pitch) >= 0.1)
+            command = f"HEAD_POSE_SET:{yaw:.1f},{pitch:.1f}" if changed else None
+        self.yaw_target_deg = yaw
+        self.pitch_target_deg = pitch
+        # The V8.8.3 base planner records a send before this rate limiter.
+        # Restore its bookkeeping unless the limited command really exists.
+        self.last_pose_send_at = now if command else previous_at
+        self.last_sent_yaw = yaw if command else previous_sent_yaw
+        self.last_sent_pitch = pitch if command else previous_sent_pitch
+        return replace(plan, yaw_target_deg=yaw, pitch_target_deg=pitch,
+                       head_pose_command=command)
+
+
+class HeadOnlyPlanner(_SmoothHeadAiming, V883PersonDualLoop):
     """Limit the planner's internal state, optionally using calibrated pitch."""
 
     def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0,
-                 invert_horizontal: bool = False):
+                 invert_horizontal: bool = False,
+                 head_speed_deg_s: float = 3.0):
         super().__init__()
+        self._init_head_aiming(head_speed_deg_s)
         self.pitch_min = pitch_min
         self.pitch_max = pitch_max
         self.invert_horizontal = invert_horizontal
 
-    def step(self, target, *args, **kwargs):
+    def step(self, target, *, now: float, **kwargs):
         if self.invert_horizontal:
             target = replace(target, error_x=-target.error_x)
-        plan = super().step(target, *args, **kwargs)
-        self.yaw_target_deg = max(-3.0, min(3.0, self.yaw_target_deg))
-        self.pitch_target_deg = max(self.pitch_min, min(self.pitch_max, self.pitch_target_deg))
+        target = self._filter_aim(target)
+        previous = (self.yaw_target_deg, self.pitch_target_deg,
+                    self.last_pose_send_at, self.last_sent_yaw, self.last_sent_pitch)
+        plan = super().step(target, now=now, **kwargs)
+        plan = self._limit_head_command(plan, now=now, previous=previous)
         self.body_candidate = None
         self.body_candidate_count = 0
         self.motion_pending = False
-        if plan.head_pose_command is not None:
-            self.last_sent_yaw = self.yaw_target_deg
-            self.last_sent_pitch = self.pitch_target_deg
-            head_command = f"HEAD_POSE_SET:{self.yaw_target_deg:.1f},{self.pitch_target_deg:.1f}"
-        else:
-            head_command = None
         return replace(plan, body_command=None, suggested_body_turn=None,
                        yaw_target_deg=self.yaw_target_deg,
-                       pitch_target_deg=self.pitch_target_deg,
-                       head_pose_command=head_command)
+                       pitch_target_deg=self.pitch_target_deg)
 
 
-class HeadBodyTurnPlanner(V883PersonDualLoop):
+class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
     """Measured-feedback turns with visual confirmation, no session turn quota."""
 
     def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0,
                  stable_frames: int = 4, settle_s: float = 1.0,
                  edge_fraction: float = 0.15,
-                 invert_horizontal: bool = False):
+                 invert_horizontal: bool = False,
+                 head_speed_deg_s: float = 3.0):
         super().__init__()
+        self._init_head_aiming(head_speed_deg_s)
         self.pitch_min = pitch_min
         self.pitch_max = pitch_max
         self.stable_frames = stable_frames
@@ -87,14 +151,11 @@ class HeadBodyTurnPlanner(V883PersonDualLoop):
     def step(self, target, *, now, **kwargs):
         if self.invert_horizontal:
             target = replace(target, error_x=-target.error_x)
+        target = self._filter_aim(target)
+        previous = (self.yaw_target_deg, self.pitch_target_deg,
+                    self.last_pose_send_at, self.last_sent_yaw, self.last_sent_pitch)
         plan = super().step(target, now=now, **kwargs)
-        self.yaw_target_deg = max(-3.0, min(3.0, self.yaw_target_deg))
-        self.pitch_target_deg = max(self.pitch_min, min(self.pitch_max, self.pitch_target_deg))
-        head_command = None
-        if plan.head_pose_command is not None:
-            self.last_sent_yaw = self.yaw_target_deg
-            self.last_sent_pitch = self.pitch_target_deg
-            head_command = f"HEAD_POSE_SET:{self.yaw_target_deg:.1f},{self.pitch_target_deg:.1f}"
+        plan = self._limit_head_command(plan, now=now, previous=previous)
         body_command = plan.body_command
         reason = plan.reason
         if body_command is not None:
@@ -104,7 +165,12 @@ class HeadBodyTurnPlanner(V883PersonDualLoop):
             # Head servo handles smaller movements. Only after yaw reaches
             # its calibrated boundary and the face approaches the edge do
             # we request a feedback-gated body turn while vision is still valid.
-            head_near_limit = abs(self.yaw_target_deg) >= 2.5
+            feedback_yaw = kwargs.get("head_yaw_feedback_deg")
+            head_near_limit = (abs(self.yaw_target_deg) >= 2.5
+                               and kwargs.get("head_feedback_fresh", False)
+                               and feedback_yaw is not None
+                               and abs(feedback_yaw) >= 2.2
+                               and self.yaw_target_deg * feedback_yaw > 0)
             if (normalized_error < self.edge_fraction or
                     not head_near_limit or not settled):
                 reason = "BODY_WAIT_TARGET_EDGE_OR_SETTLING"
@@ -132,7 +198,7 @@ class HeadBodyTurnPlanner(V883PersonDualLoop):
             self._proposal_direction = None
         return replace(plan, yaw_target_deg=self.yaw_target_deg,
                        pitch_target_deg=self.pitch_target_deg,
-                       head_pose_command=head_command, body_command=body_command,
+                       body_command=body_command,
                        reason=reason)
 
 
@@ -249,9 +315,24 @@ class BoundedSearchController(RemotePersonController):
 
     def process(self, result, *, rtt_ms: float,
                 now: Optional[float] = None) -> FollowCycle:
-        if not self.gateway.safety.recovering:
-            return super().process(result, rtt_ms=rtt_ms, now=now)
+        # SAFE/STOP frames still pass through the V8.8.3 planner to display
+        # targets, but their unsent pose must NEVER become the next AUTO
+        # starting angle. Resume from fresh MCU-reported angles instead.
         current = time.monotonic() if now is None else now
+        if isinstance(self.planner, _SmoothHeadAiming) and self.planner.last_pose_send_at is None:
+            feedback = self.telemetry.snapshot(now=current)
+            if feedback.head_fresh and feedback.head_yaw_deg is not None:
+                yaw = feedback.head_yaw_deg
+                pitch = feedback.head_pitch_deg
+                if (not -3.0 <= yaw <= 3.0 or pitch is None or
+                        not self.planner.pitch_min <= pitch <= self.planner.pitch_max):
+                    self.gateway.emergency_stop()
+                    return FollowCycle(Mode.ESTOP, False, self.planner.target_lost(),
+                                       False, False, "HEAD_FEEDBACK_OUTSIDE_APPROVED_RANGE")
+                self.planner.yaw_target_deg = yaw
+                self.planner.pitch_target_deg = pitch
+        if not self.gateway.safety.recovering:
+            return super().process(result, rtt_ms=rtt_ms, now=current)
         valid = detection_to_person_target(result) is not None and not result.error
         self.gateway.observe_detection(valid, rtt_ms, now=current)
         mode = self.gateway.status(now=current).safety.mode
@@ -270,7 +351,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  turn_stable_frames: int = 4,
                  turn_settle_seconds: float = 1.0,
                  turn_edge_fraction: float = .15,
-                 invert_horizontal: bool = True) -> None:
+                 invert_horizontal: bool = False,
+                 head_speed_deg_s: float = 3.0) -> None:
         if body_enabled and not head_enabled:
             raise ValueError("body turns require head control opt-in")
         super().__init__()
@@ -283,6 +365,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self._gesture_pending_event = 0
         self._gesture_pending_since = 0.0
         self.invert_horizontal = invert_horizontal
+        self.head_speed_deg_s = head_speed_deg_s
         self._preview_jpeg: Optional[bytes] = None
         self._preview_resolution: Optional[str] = None
         self.turn_edge_fraction = turn_edge_fraction
@@ -301,10 +384,12 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 stable_frames=turn_stable_frames,
                 settle_s=turn_settle_seconds,
                 edge_fraction=turn_edge_fraction,
-                invert_horizontal=invert_horizontal
+                invert_horizontal=invert_horizontal,
+                head_speed_deg_s=head_speed_deg_s,
             ) if body_enabled else HeadOnlyPlanner(
                 pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1],
-                invert_horizontal=invert_horizontal)),
+                invert_horizontal=invert_horizontal,
+                head_speed_deg_s=head_speed_deg_s)),
             enable_actuation=head_enabled,
         )
         self._feedback = Esp32FeedbackPoller(self.sink, self.controller)
@@ -427,6 +512,9 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 zone = "HEAD AIM"
             screen_side = "RIGHT" if dx > 0 else "LEFT" if dx < 0 else "CENTER"
             heading = f"{zone} | {source} | SCREEN {screen_side} | dx:{dx:+d}px dy:{dy:+d}px"
+            if follow is not None and drive_mode == Mode.AUTO:
+                heading += (f" | YAW {follow.plan.yaw_target_deg:+.1f}"
+                            f" PITCH {follow.plan.pitch_target_deg:+.1f}")
         elif state in ("LOST", "TEMPORARILY_LOST") and last_aim is not None and now-last_seen_at < 3.:
             lx, ly = last_aim
             direction = "RIGHT" if lx > cx else "LEFT" if lx < cx else "CENTER"
@@ -589,6 +677,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status["head_only_test"] = self.head_enabled and not self.body_enabled
             status["body_motion_permitted"] = self.body_enabled
             status["pitch_tracking_enabled"] = self.pitch_bounds != (0.0, 0.0)
+            status["head_speed_limit_deg_s"] = self.head_speed_deg_s
             status["actuation_scope"] = (
                 "HEAD_YAW_3DEG_AND_FEEDBACK_GATED_BODY_TURNS" if self.body_enabled
                 else "HEAD_YAW_ONLY_3DEG" if self.head_enabled
@@ -748,8 +837,13 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--turn-stable-frames", type=int, default=4)
     ap.add_argument("--turn-settle-seconds", type=float, default=1.0)
     ap.add_argument("--turn-edge-fraction", type=float, default=.15)
-    ap.add_argument("--legacy-horizontal-direction", action="store_true",
-                    help="Restore previous right/left tracking sign if physical test requires")
+    direction_group = ap.add_mutually_exclusive_group()
+    direction_group.add_argument("--legacy-horizontal-direction", action="store_true",
+                                 help="V8.8.3 verified left/right sign (now the default)")
+    direction_group.add_argument("--reverse-horizontal-direction", action="store_true",
+                                 help="Reverse yaw sign only after a secured physical test")
+    ap.add_argument("--head-speed-deg-per-second", type=float, default=3.0,
+                    help="Maximum change in Pi head setpoint, default 3 deg/s")
     ap.add_argument("--bench-secured", action="store_true")
     ap.add_argument("--neutral-calibrated", action="store_true")
     ap.add_argument("--physical-cutoff-tested", action="store_true")
@@ -772,6 +866,10 @@ def main(argv: Optional[list[str]] = None) -> None:
         ap.error("invalid turn stability/settling settings")
     if not 0.05 <= args.turn_edge_fraction <= .45:
         ap.error("turn edge fraction must be in .05 .. .45")
+    if not math.isfinite(args.head_speed_deg_per_second) or not (
+        0.5 <= args.head_speed_deg_per_second <= 10.0
+    ):
+        ap.error("head speed must be between 0.5 and 10 deg/s")
     if args.enable_head_test and not args.servo_power_on:
         ap.error("Head motor test requires explicitly declared servo V+ ON")
     if args.enable_head_test and not (
@@ -795,7 +893,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         turn_stable_frames=args.turn_stable_frames,
         turn_settle_seconds=args.turn_settle_seconds,
         turn_edge_fraction=args.turn_edge_fraction,
-        invert_horizontal=not args.legacy_horizontal_direction,
+        invert_horizontal=args.reverse_horizontal_direction,
+        head_speed_deg_s=args.head_speed_deg_per_second,
     )
     worker = None
     server = None
