@@ -143,7 +143,9 @@
     try {
       const status = await call("/api/status");
       lastStatus = status;
-      byId("camera-resolution").textContent = status.camera_resolution || "映像待機";
+      byId("camera-resolution").textContent = (status.camera_resolution || "映像待機") +
+        (status.camera_effective_fps == null ? "" : " · 実測 " + status.camera_effective_fps + " FPS") +
+        (status.inference_ms == null ? "" : " · GPU推論 " + status.inference_ms + " ms");
       currentMode = status.mode;
       byId("mode").textContent = status.mode;
       const led = status.led_indicated_color || (

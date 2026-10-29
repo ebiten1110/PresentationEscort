@@ -26,21 +26,29 @@ from remote_person_controller import FollowCycle, RemotePersonController
 from person_target_adapter import detection_to_person_target
 from safety_manager import Mode
 from serial_command_sink import SerialCommandSink
-from v883_person_dual_loop import V883PersonDualLoop
+from v883_person_dual_loop import (
+    CAMERA_X_TO_ROBOT_YAW_DIRECTION, HEAD_PITCH_IMAGE_DIRECTION,
+    HEAD_X_DEADZONE_PX, HEAD_Y_DEADZONE_PX,
+    V883PersonDualLoop, VIRTUAL_FRAME_HEIGHT, VIRTUAL_FRAME_WIDTH,
+)
 
 _POSE = re.compile(r"^HEAD_POSE_SET:([-+]?\d+(?:\.\d+)?),([-+]?\d+(?:\.\d+)?)$")
 
 
 class _SmoothHeadAiming:
-    """Rate-limit head setpoints on the Pi; never change firmware safety gates.
+    """Feedback-referenced proportional aim; no per-camera-frame angle winding.
 
-    The firmware can move 1 degree every 30 ms. We instead send small,
-    time-bounded setpoint changes so a large face error cannot jerk the head.
-    This is a command rate limit, not physical shaft-speed telemetry.
+    ESP32 reports its internal interpolated servo angle (NOT a shaft encoder).
+    Never sum camera-pixel errors into the target angle on every GPU frame.
+    Bound the correction relative to the latest fresh MCU angle, then slew
+    each setpoint; higher camera FPS must not increase the commanded speed.
     """
 
-    _send_interval_s = 0.10
-    _aim_alpha = 0.40
+    _send_interval_s = 0.05  # Up to 20 Hz, when the camera actually delivers it.
+    _aim_tau_s = 0.08       # Low delay, time-based; independent of camera FPS.
+    _yaw_gain_deg_per_px = 0.012
+    _pitch_gain_deg_per_px = 0.010
+    _correction_limit_deg = 0.60
 
     def _init_head_aiming(self, speed_deg_s: float) -> None:
         if not math.isfinite(speed_deg_s) or not 0.5 <= speed_deg_s <= 10.0:
@@ -48,15 +56,19 @@ class _SmoothHeadAiming:
         self.head_speed_deg_s = speed_deg_s
         self._smoothed_error_x: Optional[float] = None
         self._smoothed_error_y: Optional[float] = None
+        self._aim_last_at: Optional[float] = None
+        self._head_pitch_feedback_deg: Optional[float] = None
 
-    def _filter_aim(self, target):
+    def _filter_aim(self, target, *, now: float):
         if self._smoothed_error_x is None:
             self._smoothed_error_x = float(target.error_x)
             self._smoothed_error_y = float(target.error_y)
         else:
-            alpha = self._aim_alpha
+            elapsed = max(0.0, now - self._aim_last_at)
+            alpha = 1.0 - math.exp(-min(elapsed, 0.5) / self._aim_tau_s)
             self._smoothed_error_x += alpha * (target.error_x - self._smoothed_error_x)
             self._smoothed_error_y += alpha * (target.error_y - self._smoothed_error_y)
+        self._aim_last_at = now
         return replace(target, error_x=round(self._smoothed_error_x),
                        error_y=round(self._smoothed_error_y))
 
@@ -64,12 +76,52 @@ class _SmoothHeadAiming:
         # Never steer on remembered / interpolated pixels after a dropout.
         self._smoothed_error_x = None
         self._smoothed_error_y = None
+        self._aim_last_at = None
         return super().target_lost()
 
-    def _limit_head_command(self, plan, *, now: float, previous: tuple):
+    @staticmethod
+    def _proportional_delta(error: int, deadzone: int, gain: float) -> float:
+        if abs(error) <= deadzone:
+            return 0.0
+        signed = error - math.copysign(deadzone, error)
+        return max(-_SmoothHeadAiming._correction_limit_deg,
+                   min(_SmoothHeadAiming._correction_limit_deg, signed * gain))
+
+    def _limit_head_command(self, plan, *, now: float, previous: tuple,
+                            target, yaw_feedback, pitch_feedback,
+                            feedback_fresh: bool):
         previous_yaw, previous_pitch, previous_at, previous_sent_yaw, previous_sent_pitch = previous
-        desired_yaw = max(-3.0, min(3.0, self.yaw_target_deg))
-        desired_pitch = max(self.pitch_min, min(self.pitch_max, self.pitch_target_deg))
+        if pitch_feedback is None and self.pitch_min == self.pitch_max == 0.0:
+            # Yaw-only tests have no active pitch control. Do not require a
+            # pitch sample solely to hold this axis at its locked zero.
+            pitch_feedback = 0.0
+        valid_yaw = (feedback_fresh and yaw_feedback is not None
+                     and math.isfinite(yaw_feedback) and -3.0 <= yaw_feedback <= 3.0)
+        valid_pitch = (feedback_fresh and pitch_feedback is not None
+                       and math.isfinite(pitch_feedback)
+                       and self.pitch_min <= pitch_feedback <= self.pitch_max)
+        # Stale/invalid ESP32 angle means STOP proposing new servo positions.
+        # In particular never fall back to adding one pixel correction per FPS.
+        if not valid_yaw or not valid_pitch:
+            self.yaw_target_deg, self.pitch_target_deg = previous_yaw, previous_pitch
+            self.last_pose_send_at = previous_at
+            self.last_sent_yaw, self.last_sent_pitch = previous_sent_yaw, previous_sent_pitch
+            return replace(plan, yaw_target_deg=previous_yaw,
+                           pitch_target_deg=previous_pitch, head_pose_command=None)
+
+        virtual_x = round(target.error_x * VIRTUAL_FRAME_WIDTH / target.frame_width)
+        virtual_y = round(target.error_y * VIRTUAL_FRAME_HEIGHT / target.frame_height)
+        yaw_delta = self._proportional_delta(
+            virtual_x, HEAD_X_DEADZONE_PX, self._yaw_gain_deg_per_px)
+        pitch_delta = (self._proportional_delta(
+            virtual_y, HEAD_Y_DEADZONE_PX, self._pitch_gain_deg_per_px)
+            if plan.pitch_tracking_enabled else 0.0)
+        desired_yaw = max(-3.0, min(3.0,
+            yaw_feedback + yaw_delta * CAMERA_X_TO_ROBOT_YAW_DIRECTION))
+        # If the image is mirrored for display, *only* yaw sign is swapped
+        # before _filter_aim, as in the previously tested implementation.
+        desired_pitch = max(self.pitch_min, min(self.pitch_max,
+            pitch_feedback + pitch_delta * HEAD_PITCH_IMAGE_DIRECTION))
         elapsed = (0.12 if previous_at is None
                    else max(0.0, now - previous_at))
         if previous_at is not None and elapsed + 1e-9 < self._send_interval_s:
@@ -111,11 +163,16 @@ class HeadOnlyPlanner(_SmoothHeadAiming, V883PersonDualLoop):
     def step(self, target, *, now: float, **kwargs):
         if self.invert_horizontal:
             target = replace(target, error_x=-target.error_x)
-        target = self._filter_aim(target)
+        target = self._filter_aim(target, now=now)
+        pitch_feedback = kwargs.pop("head_pitch_feedback_deg", self._head_pitch_feedback_deg)
         previous = (self.yaw_target_deg, self.pitch_target_deg,
                     self.last_pose_send_at, self.last_sent_yaw, self.last_sent_pitch)
         plan = super().step(target, now=now, **kwargs)
-        plan = self._limit_head_command(plan, now=now, previous=previous)
+        plan = self._limit_head_command(
+            plan, now=now, previous=previous, target=target,
+            yaw_feedback=kwargs.get("head_yaw_feedback_deg"),
+            pitch_feedback=pitch_feedback,
+            feedback_fresh=kwargs.get("head_feedback_fresh", False))
         self.body_candidate = None
         self.body_candidate_count = 0
         self.motion_pending = False
@@ -151,11 +208,16 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
     def step(self, target, *, now, **kwargs):
         if self.invert_horizontal:
             target = replace(target, error_x=-target.error_x)
-        target = self._filter_aim(target)
+        target = self._filter_aim(target, now=now)
+        pitch_feedback = kwargs.pop("head_pitch_feedback_deg", self._head_pitch_feedback_deg)
         previous = (self.yaw_target_deg, self.pitch_target_deg,
                     self.last_pose_send_at, self.last_sent_yaw, self.last_sent_pitch)
         plan = super().step(target, now=now, **kwargs)
-        plan = self._limit_head_command(plan, now=now, previous=previous)
+        plan = self._limit_head_command(
+            plan, now=now, previous=previous, target=target,
+            yaw_feedback=kwargs.get("head_yaw_feedback_deg"),
+            pitch_feedback=pitch_feedback,
+            feedback_fresh=kwargs.get("head_feedback_fresh", False))
         body_command = plan.body_command
         reason = plan.reason
         if body_command is not None:
@@ -319,6 +381,10 @@ class BoundedSearchController(RemotePersonController):
         # targets, but their unsent pose must NEVER become the next AUTO
         # starting angle. Resume from fresh MCU-reported angles instead.
         current = time.monotonic() if now is None else now
+        if isinstance(self.planner, _SmoothHeadAiming):
+            feedback = self.telemetry.snapshot(now=current)
+            self.planner._head_pitch_feedback_deg = (
+                feedback.head_pitch_deg if feedback.head_fresh else None)
         if isinstance(self.planner, _SmoothHeadAiming) and self.planner.last_pose_send_at is None:
             feedback = self.telemetry.snapshot(now=current)
             if feedback.head_fresh and feedback.head_yaw_deg is not None:
@@ -352,7 +418,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  turn_settle_seconds: float = 1.0,
                  turn_edge_fraction: float = .15,
                  invert_horizontal: bool = False,
-                 head_speed_deg_s: float = 3.0) -> None:
+                 head_speed_deg_s: float = 2.0) -> None:
         if body_enabled and not head_enabled:
             raise ValueError("body turns require head control opt-in")
         super().__init__()
@@ -368,6 +434,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self.head_speed_deg_s = head_speed_deg_s
         self._preview_jpeg: Optional[bytes] = None
         self._preview_resolution: Optional[str] = None
+        self._last_detection_at: Optional[float] = None
+        self._camera_interval_s: Optional[float] = None
         self.turn_edge_fraction = turn_edge_fraction
         self._last_camera_aim: Optional[tuple[int, int]] = None
         self._last_camera_aim_at = 0.0
@@ -546,6 +614,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
         with self._guard:
             super().set_camera_state(active, connected)
             if not connected:
+                self._last_detection_at = None
+                self._camera_interval_s = None
                 self._preview_jpeg = None
                 self._preview_resolution = None
                 # New PC connection must not inherit old operator gesture
@@ -640,6 +710,10 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 if follow is not None else None
             )
             status["camera_resolution"] = self._preview_resolution
+            status["camera_effective_fps"] = (
+                round(1.0 / self._camera_interval_s, 1)
+                if self._camera_interval_s is not None and self._camera_interval_s > 0
+                else None)
             status["gesture_control_enabled"] = self.gesture_control_enabled
             status["search_state"] = ("SEARCHING" if self.gateway.safety.recovering
                                       else self._search_result)
@@ -704,6 +778,13 @@ class LockedRealRuntime(LockedSimulationRuntime):
     def process_detection(self, detection, rtt_ms: float) -> None:
         with self._guard:
             now = time.monotonic()
+            if self._last_detection_at is not None:
+                elapsed = now - self._last_detection_at
+                if 0.01 <= elapsed <= 1.0:
+                    self._camera_interval_s = (
+                        elapsed if self._camera_interval_s is None
+                        else 0.8 * self._camera_interval_s + 0.2 * elapsed)
+            self._last_detection_at = now
             was_searching = self.gateway.safety.recovering
             proposal = None if was_searching else self._search_candidate(
                 detection, rtt_ms, now)
@@ -818,6 +899,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--camera-index", type=int, default=0)
     ap.add_argument("--camera-width", type=int, default=640)
     ap.add_argument("--camera-height", type=int, default=480)
+    ap.add_argument("--camera-fps", type=int, default=30,
+                    help="Requested camera capture FPS (5..60); actual rate may be lower")
     ap.add_argument("--jpeg-quality", type=int, default=80)
     ap.add_argument("--port", type=int, default=8766)
     power_group = ap.add_mutually_exclusive_group(required=True)
@@ -842,8 +925,8 @@ def main(argv: Optional[list[str]] = None) -> None:
                                  help="V8.8.3 verified left/right sign (now the default)")
     direction_group.add_argument("--reverse-horizontal-direction", action="store_true",
                                  help="Reverse yaw sign only after a secured physical test")
-    ap.add_argument("--head-speed-deg-per-second", type=float, default=3.0,
-                    help="Maximum change in Pi head setpoint, default 3 deg/s")
+    ap.add_argument("--head-speed-deg-per-second", type=float, default=2.0,
+                    help="Maximum change in Pi head setpoint, default 2 deg/s")
     ap.add_argument("--bench-secured", action="store_true")
     ap.add_argument("--neutral-calibrated", action="store_true")
     ap.add_argument("--physical-cutoff-tested", action="store_true")
@@ -870,6 +953,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         0.5 <= args.head_speed_deg_per_second <= 10.0
     ):
         ap.error("head speed must be between 0.5 and 10 deg/s")
+    if not 5 <= args.camera_fps <= 60:
+        ap.error("camera fps request must be 5..60")
     if args.enable_head_test and not args.servo_power_on:
         ap.error("Head motor test requires explicitly declared servo V+ ON")
     if args.enable_head_test and not (
@@ -906,6 +991,7 @@ def main(argv: Optional[list[str]] = None) -> None:
                 camera_index=args.camera_index,
                 camera_width=args.camera_width,
                 camera_height=args.camera_height,
+                camera_fps=args.camera_fps,
                 jpeg_quality=args.jpeg_quality,
             )
             worker.start()

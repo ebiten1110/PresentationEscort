@@ -160,6 +160,7 @@ class CameraInferenceWorker(threading.Thread):
         timeout_s: float = 30.0,  # First CUDA inference can exceed 10s; Pi safety tick runs independently.
         camera_width: int = 640,
         camera_height: int = 480,
+        camera_fps: int = 30,
         jpeg_quality: int = 80,
     ) -> None:
         super().__init__(name="camera-inference-dry-run", daemon=True)
@@ -172,8 +173,11 @@ class CameraInferenceWorker(threading.Thread):
             raise ValueError("camera resolution outside supported range")
         if not 30 <= jpeg_quality <= 95:
             raise ValueError("jpeg quality outside supported range")
+        if not 5 <= camera_fps <= 60:
+            raise ValueError("camera fps request outside supported range")
         self.camera_width = camera_width
         self.camera_height = camera_height
+        self.camera_fps = camera_fps
         self.jpeg_quality = jpeg_quality
         self.done = threading.Event()
 
@@ -186,6 +190,10 @@ class CameraInferenceWorker(threading.Thread):
             cam = cv2.VideoCapture(self.camera_index)
             cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
             cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
+            # This is a *request*, not an achievable-FPS guarantee. The
+            # USB camera, Pi JPEG encode, PC inference, and synchronous TCP
+            # roundtrip jointly determine the actual frame rate.
+            cam.set(cv2.CAP_PROP_FPS, self.camera_fps)
             cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.runtime.set_camera_state(cam.isOpened(), False)
             try:

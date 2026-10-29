@@ -1,4 +1,4 @@
-"""Two-axis face aim, bounded slew, and old physical yaw sign (no hardware)."""
+"""Two-axis proportional face aim, FPS independence and safety (no hardware)."""
 from __future__ import annotations
 
 import sys
@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from detection_protocol import DetectionResult
 from person_target_adapter import detection_to_person_target
 from pi_real_head_integration import HeadBodyTurnPlanner, HeadOnlyPlanner
+from pi_operator_console import CameraInferenceWorker
 
 
 def face_target(*, x: int, y: int):
@@ -28,21 +29,29 @@ class SmoothFaceTests(unittest.TestCase):
     def test_v883_physical_yaw_sign_restored_by_default(self):
         planner = HeadOnlyPlanner()
         # Camera screen LEFT requests positive yaw in the old V8.8.3 mapping.
-        plan = planner.step(face_target(x=40, y=120), now=1.)
+        plan = planner.step(face_target(x=40, y=120), now=1.,
+                            head_yaw_feedback_deg=0., head_feedback_fresh=True)
         self.assertGreater(plan.yaw_target_deg, 0.)
         self.assertEqual(plan.pitch_target_deg, 0.)
 
     def test_explicit_reversal_remains_available(self):
         planner = HeadOnlyPlanner(invert_horizontal=True)
-        plan = planner.step(face_target(x=40, y=120), now=1.)
+        plan = planner.step(face_target(x=40, y=120), now=1.,
+                            head_yaw_feedback_deg=0., head_feedback_fresh=True)
         self.assertLess(plan.yaw_target_deg, 0.)
 
     def test_face_target_slews_both_axes_at_three_deg_per_second(self):
-        planner = HeadOnlyPlanner(pitch_min=-3., pitch_max=3.)
+        planner = HeadOnlyPlanner(pitch_min=-3., pitch_max=3., head_speed_deg_s=3.)
         angles = []
+        feedback_yaw, feedback_pitch = 0., 0.
         for i in range(26):
-            plan = planner.step(face_target(x=40, y=20), now=1.+i*.1)
+            plan = planner.step(
+                face_target(x=40, y=20), now=1.+i*.1,
+                head_yaw_feedback_deg=feedback_yaw,
+                head_pitch_feedback_deg=feedback_pitch,
+                head_feedback_fresh=True)
             angles.append((plan.yaw_target_deg, plan.pitch_target_deg))
+            feedback_yaw, feedback_pitch = plan.yaw_target_deg, plan.pitch_target_deg
             self.assertLessEqual(abs(plan.yaw_target_deg), 3.)
             self.assertLessEqual(abs(plan.pitch_target_deg), 3.)
             if i:
@@ -54,7 +63,8 @@ class SmoothFaceTests(unittest.TestCase):
     def test_disabled_pitch_remains_fixed_at_zero(self):
         planner = HeadOnlyPlanner()
         for i in range(15):
-            plan = planner.step(face_target(x=120, y=10), now=1.+i*.15)
+            plan = planner.step(face_target(x=120, y=10), now=1.+i*.15,
+                                head_yaw_feedback_deg=0., head_feedback_fresh=True)
             self.assertEqual(plan.pitch_target_deg, 0.)
             self.assertTrue(plan.head_pose_command is None or
                             plan.head_pose_command.endswith(",0.0"))
@@ -63,13 +73,15 @@ class SmoothFaceTests(unittest.TestCase):
         planner = HeadOnlyPlanner(pitch_min=-3., pitch_max=3.)
         for i, offset in enumerate((0, 2, -3, 4, -2, 1, 0)):
             plan = planner.step(face_target(x=160+offset, y=120+offset),
-                                now=1.+i*.15)
+                                now=1.+i*.15, head_yaw_feedback_deg=0.,
+                                head_pitch_feedback_deg=0., head_feedback_fresh=True)
             self.assertEqual(plan.yaw_target_deg, 0.)
             self.assertEqual(plan.pitch_target_deg, 0.)
 
     def test_lost_target_sends_no_pose_and_resets_pixel_filter(self):
         planner = HeadOnlyPlanner()
-        planner.step(face_target(x=40, y=100), now=1.)
+        planner.step(face_target(x=40, y=100), now=1.,
+                     head_yaw_feedback_deg=0., head_feedback_fresh=True)
         self.assertIsNotNone(planner._smoothed_error_x)
         lost = planner.target_lost()
         self.assertIsNone(lost.head_pose_command)
@@ -83,6 +95,58 @@ class SmoothFaceTests(unittest.TestCase):
                                 head_yaw_feedback_deg=plan.yaw_target_deg if i else 0.,
                                 head_feedback_fresh=True, body_idle=True)
             self.assertIsNone(plan.body_command)
+
+    def test_sixty_fps_stagnant_feedback_does_not_accumulate_degrees(self):
+        planner = HeadOnlyPlanner(pitch_min=-3., pitch_max=3.)
+        # Old pixel integrator would saturate at +/-3 degrees merely because
+        # the GPU returned more frames, even if the neck had not moved.
+        for i in range(240):
+            plan = planner.step(face_target(x=40, y=20), now=1.+i/60.,
+                                head_yaw_feedback_deg=0., head_pitch_feedback_deg=0.,
+                                head_feedback_fresh=True)
+            self.assertLessEqual(abs(plan.yaw_target_deg), .7)
+            self.assertLessEqual(abs(plan.pitch_target_deg), .7)
+        self.assertLessEqual(abs(planner.yaw_target_deg), .7)
+
+    def test_same_elapsed_time_has_similar_twenty_and_sixty_fps_motion(self):
+        def final_yaw(fps):
+            planner = HeadOnlyPlanner(head_speed_deg_s=2.)
+            for i in range(fps*2):
+                planner.step(face_target(x=40, y=120), now=1.+i/fps,
+                             head_yaw_feedback_deg=0., head_feedback_fresh=True)
+            return planner.yaw_target_deg
+        self.assertLessEqual(abs(final_yaw(20)-final_yaw(60)), .2)
+
+    def test_when_face_centers_head_holds_reported_angle(self):
+        planner = HeadOnlyPlanner(pitch_min=-3., pitch_max=3.)
+        yaw_positions = []
+        for i in range(6):
+            plan = planner.step(face_target(x=160, y=120), now=1.+i*.1,
+                                head_yaw_feedback_deg=1.1,
+                                head_pitch_feedback_deg=-0.9,
+                                head_feedback_fresh=True)
+            yaw_positions.append(plan.yaw_target_deg)
+        self.assertEqual(yaw_positions, sorted(yaw_positions))
+        # The controller should converge to the reported current angle,
+        # not keep winding past it with a zero-pixel error.
+        self.assertAlmostEqual(plan.yaw_target_deg, 1.1, places=1)
+        self.assertAlmostEqual(plan.pitch_target_deg, -0.9, places=1)
+
+    def test_stale_head_feedback_cannot_issue_new_head_pose(self):
+        planner = HeadOnlyPlanner(pitch_min=-2., pitch_max=2.)
+        for i in range(50):
+            plan = planner.step(face_target(x=20, y=15), now=1.+i/30.,
+                                head_yaw_feedback_deg=None,
+                                head_pitch_feedback_deg=None,
+                                head_feedback_fresh=False)
+            self.assertIsNone(plan.head_pose_command)
+            self.assertEqual((plan.yaw_target_deg, plan.pitch_target_deg), (0., 0.))
+
+    def test_camera_fps_request_is_bounded(self):
+        self.assertEqual(CameraInferenceWorker(None, "127.0.0.1", camera_fps=60).camera_fps, 60)
+        for invalid in (0, 3, 61, 100):
+            with self.assertRaises(ValueError):
+                CameraInferenceWorker(None, "127.0.0.1", camera_fps=invalid)
 
     def test_speed_limit_validation(self):
         for rate in (0., -3., float("nan"), float("inf"), 20.):

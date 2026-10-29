@@ -38,13 +38,13 @@ class SearchTests(unittest.TestCase):
         self.addCleanup(self.runtime.close)
         self.runtime.start()
         self.assertTrue(self.runtime.action("gesture_on")["ok"])
-        for seq in range(1, 8):
+        for seq in range(1, 7):
             sample = frame(seq)
             sample.gesture_indices = [0]
             self.runtime.process_detection(sample, 65.)
             time.sleep(.025)
         until(lambda: self.runtime.status()["mode"] == "AUTO")
-        for seq in range(8, 12):
+        for seq in range(7, 12):
             self.runtime.process_detection(frame(seq), 65.)
             # The loss-search tests start at the already-reached head edge;
             # allow enough time for command rate limiting to get there.
