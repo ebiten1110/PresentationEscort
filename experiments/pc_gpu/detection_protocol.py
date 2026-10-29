@@ -37,6 +37,7 @@ class DetectionResult:
     aim_points: list[dict[str, Any]] = field(default_factory=list)
     aim_x: int | None = None
     aim_y: int | None = None
+    aim_source: str = ""
 
 
     def to_dict(self) -> Dict[str, Any]:
