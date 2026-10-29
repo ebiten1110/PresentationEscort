@@ -253,7 +253,7 @@ class PresenterLock:
         return {
             "lock_state": self.state if recent else "NO_FRESH_FRAME",
             "lock_reason": self.reason,
-            "presenter_selected": self.locked and recent and self.state == "TRACKING",
+            "presenter_selected": self.locked and recent and self.state in ("TRACKING", "SELECTED_WAIT_NEXT_FRAME"),
             "selected_index": next(
                 (i for i, box in enumerate(self.candidates)
                  if self.locked and self._locked is not None
