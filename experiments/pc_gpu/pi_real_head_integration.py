@@ -256,11 +256,18 @@ class LockedRealRuntime(LockedSimulationRuntime):
         # continuity-selected target, not biometrics/re-identification.
         for idx, box in enumerate(boxes):
             active = idx == selected
-            color = (76, 220, 100) if active else (150, 156, 170)
+            gesturing = idx in detection.gesture_indices
+            color = (76, 220, 100) if active else ((0, 220, 255) if gesturing else (150, 156, 170))
             cv2.rectangle(img, (box.x1, box.y1), (box.x2, box.y2), color, 3 if active else 1)
-            label = ("LOCKED" if active else "OTHER") + f" {idx+1} {box.confidence:.0%}"
+            label = ("LOCKED" if active else "HANDS UP" if gesturing else "OTHER") + f" {idx+1} {box.confidence:.0%}"
             cv2.putText(img, label, (max(0, box.x1), max(19, box.y1 - 8)),
                         cv2.FONT_HERSHEY_SIMPLEX, .54, color, 2, cv2.LINE_AA)
+        if selected is not None and selected < len(detection.aim_points):
+            aim = detection.aim_points[selected]
+            if type(aim.get("x")) is int and type(aim.get("y")) is int:
+                cv2.circle(img, (aim["x"], aim["y"]), 7, (50, 180, 255), 2, cv2.LINE_AA)
+                cv2.putText(img, "FACE/AIM", (max(0, aim["x"]-30), max(18, aim["y"]-14)),
+                            cv2.FONT_HERSHEY_SIMPLEX, .42, (50, 180, 255), 1, cv2.LINE_AA)
         cx, cy = width // 2, height // 2
         cv2.line(img, (cx - 13, cy), (cx + 13, cy), (240, 245, 250), 1)
         cv2.line(img, (cx, cy - 13), (cx, cy + 13), (240, 245, 250), 1)
