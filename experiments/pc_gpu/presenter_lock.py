@@ -49,6 +49,8 @@ class PresenterLock:
         self.candidates: list[PersonBox] = []
         self._history: dict[int, tuple[float, list[PersonBox]]] = {}
         self._locked: Optional[PersonBox] = None
+        self._locked_aim: Optional[tuple[int, int]] = None
+        self._locked_aim_source: str = ""
         self.locked = False
         self.state = "UNLOCKED"
         self.reason = "OPERATOR_SELECTION_REQUIRED"
@@ -70,6 +72,8 @@ class PresenterLock:
 
     def clear(self, reason: str = "OPERATOR_SELECTION_REQUIRED") -> None:
         self._locked = None
+        self._locked_aim = None
+        self._locked_aim_source = ""
         self._gesture_candidate = None
         self._gesture_streak = 0
         self.locked = False
@@ -81,6 +85,8 @@ class PresenterLock:
 
     def _lose(self, reason: str) -> None:
         self._locked = None
+        self._locked_aim = None
+        self._locked_aim_source = ""
         self._gesture_candidate = None
         self._gesture_streak = 0
         self.locked = False
@@ -213,6 +219,42 @@ class PresenterLock:
                 and abs(box.cy - original.cy) <= max(12.0, original.height * 0.30)
             ):
                 allowed.append(box)
+        # The detector sometimes changes the *height* of the same person
+        # box between cropped and full-body estimates on consecutive frames.
+        # A uniquely visible, stable face is stronger continuity evidence
+        # than the box center for this specific geometry-jitter case.
+        if (not allowed and len(candidates) == 1 and
+                self._locked_aim is not None and self._locked_aim_source == "face" and
+                isinstance(detection.aim_points, list) and len(detection.aim_points) == 1):
+            face = detection.aim_points[0]
+            candidate = candidates[0]
+            if (isinstance(face, dict) and face.get("source") == "face" and
+                    type(face.get("x")) is int and type(face.get("y")) is int and
+                    candidate.x1 <= face["x"] <= candidate.x2 and
+                    candidate.y1 <= face["y"] <= candidate.y2 and
+                    abs(face["x"] - self._locked_aim[0]) <= 28 and
+                    abs(face["y"] - self._locked_aim[1]) <= 28 and
+                    .55 <= candidate.width / original.width <= 1.80 and
+                    .50 <= candidate.height / original.height <= 2.20):
+                allowed = [candidate]
+        # During a bounded detector dropout, retain a single significantly
+        # overlapping person as a VISUAL hint only. The first lost frame
+        # already disarmed AUTO; this must not issue any ARM request.
+        if (not allowed and self.state == "TEMPORARILY_LOST" and
+                self._recovery_deadline is not None and now <= self._recovery_deadline and
+                len(candidates) == 1 and candidates[0].confidence >= .65):
+            candidate = candidates[0]
+            overlap_width = max(0, min(original.x2, candidate.x2) -
+                                max(original.x1, candidate.x1))
+            overlap_height = max(0, min(original.y2, candidate.y2) -
+                                 max(original.y1, candidate.y1))
+            smaller_area = min(original.width * original.height,
+                               candidate.width * candidate.height)
+            if (smaller_area > 0 and overlap_width * overlap_height / smaller_area >= .65
+                    and .50 <= candidate.width / original.width <= 2.4
+                    and .50 <= candidate.height / original.height <= 2.2
+                    and abs(candidate.cx - original.cx) <= original.width * .85):
+                allowed = [candidate]
         if len(allowed) != 1:
             if self.transient_recovery_s > 0 and len(candidates) == 0:
                 if self._recovery_deadline is None:
@@ -236,7 +278,8 @@ class PresenterLock:
         self._recovery_deadline = None
         self._locked = chosen
         self.state = "TRACKING"
-        self.reason = "LOCKED_GEOMETRY_ONLY"
+        self.reason = ("VISUAL_REACQUIRED_GESTURE_REQUIRED"
+                       if self._needs_resume_gesture else "LOCKED_GEOMETRY_ONLY")
         chosen_index = next((i for i, box in enumerate(candidates) if box is chosen), -1)
         if self._needs_resume_gesture:
             raised = (isinstance(detection.gesture_indices, list) and
@@ -262,6 +305,8 @@ class PresenterLock:
                     and chosen.y1 <= aim["y"] <= chosen.y2):
                 face_x, face_y = aim["x"], aim["y"]
                 aim_source = aim.get("source") if aim.get("source") in ("face", "shoulders", "upper_body") else ""
+        self._locked_aim = (face_x, face_y) if aim_source == "face" else None
+        self._locked_aim_source = aim_source
         return replace(
             detection, found=True, center_x=round(chosen.cx),
             center_y=round(chosen.cy), aim_x=face_x, aim_y=face_y,

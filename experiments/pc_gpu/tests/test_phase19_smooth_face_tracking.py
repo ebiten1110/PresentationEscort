@@ -26,6 +26,50 @@ def face_target(*, x: int, y: int):
 
 
 class SmoothFaceTests(unittest.TestCase):
+    def test_relative_pitch_reference_unpins_high_face_without_expanding_range(self):
+        planner = HeadOnlyPlanner(pitch_min=-2., pitch_max=2.,
+                                  relative_pitch_reference=True,
+                                  head_speed_deg_s=2., pitch_speed_deg_s=1.5)
+        planner.pitch_target_deg = -2.
+        feedback = -2.
+        for i in range(20):
+            plan = planner.step(face_target(x=160, y=80), now=1.+i*.12,
+                                head_yaw_feedback_deg=0.,
+                                head_pitch_feedback_deg=feedback,
+                                head_feedback_fresh=True)
+            feedback = plan.pitch_target_deg
+        self.assertAlmostEqual(feedback, 0., delta=.15)
+        for i in range(20):
+            plan = planner.step(face_target(x=160, y=160), now=4.+i*.12,
+                                head_yaw_feedback_deg=0.,
+                                head_pitch_feedback_deg=feedback,
+                                head_feedback_fresh=True)
+            feedback = plan.pitch_target_deg
+            self.assertLessEqual(abs(feedback), 2.)
+        self.assertGreater(feedback, 1.2)
+        planner.target_lost()
+        self.assertIsNone(planner.pitch_reference_y)
+
+    def test_reverse_body_turn_does_not_reverse_head_yaw(self):
+        def obtain_turn(reverse):
+            planner = HeadBodyTurnPlanner(pitch_min=-2., pitch_max=2.,
+                stable_frames=2, head_speed_deg_s=2.,
+                reverse_body_turn_direction=reverse)
+            feedback_yaw = 0.
+            for i in range(35):
+                plan = planner.step(face_target(x=5, y=120), now=1.+i*.12,
+                    head_yaw_feedback_deg=feedback_yaw,
+                    head_pitch_feedback_deg=0., head_feedback_fresh=True,
+                    body_idle=True)
+                feedback_yaw = plan.yaw_target_deg
+                if plan.body_command:
+                    return plan.body_command, plan.yaw_target_deg
+            self.fail("expected bounded turn proposal")
+        normal, normal_yaw = obtain_turn(False)
+        flipped, flipped_yaw = obtain_turn(True)
+        self.assertEqual({normal, flipped}, {"TRACK_LEFT", "TRACK_RIGHT"})
+        self.assertEqual(normal_yaw, flipped_yaw)
+
     def test_v883_physical_yaw_sign_restored_by_default(self):
         planner = HeadOnlyPlanner()
         # Camera screen LEFT requests positive yaw in the old V8.8.3 mapping.

@@ -5,6 +5,7 @@ Software-only. No GPU, webcam, ESP32 serial or motor use.
 from __future__ import annotations
 import http.client
 import json
+from dataclasses import replace
 import sys
 import threading
 import time
@@ -74,6 +75,38 @@ class PresenterLockTests(unittest.TestCase):
         self.assertFalse(self.lock.locked)
         self.assertFalse(self.lock.observe(frame(3, [candidate(215)]), now=10.2).found)
         self.assertEqual(self.lock.state, "LOST")
+
+    def test_face_continuity_survives_same_person_box_height_jitter(self):
+        self.lock = PresenterLock(gesture_enabled=True, gesture_confirm_frames=2)
+        def face_frame(seq, height):
+            data = frame(seq, [candidate(70, y=2, w=375, h=height, conf=.8)])
+            return replace(data, frame_width=640, frame_height=480,
+                gesture_indices=[0], aim_points=[{"x":245,"y":84,"source":"face"}])
+        self.lock.observe(face_frame(1, 281), now=10.)
+        self.lock.observe(face_frame(2, 281), now=10.2)
+        self.assertEqual(self.lock.state, "TRACKING")
+        result = self.lock.observe(face_frame(3, 476), now=10.4)
+        self.assertTrue(result.found)
+        self.assertEqual(self.lock.state, "TRACKING")
+
+    def test_short_loss_single_overlapping_person_is_visual_only(self):
+        self.lock = PresenterLock(gesture_enabled=True, gesture_confirm_frames=2,
+                                  transient_recovery_s=1.5)
+        def tracked(seq, boxes, gesture):
+            data = frame(seq, boxes)
+            return replace(data, frame_width=640, frame_height=480,
+                           gesture_indices=[0] if gesture else [])
+        initial = candidate(0, y=0, w=163, h=479, conf=.8)
+        self.lock.observe(tracked(1, [initial], True), now=10.)
+        self.lock.observe(tracked(2, [initial], True), now=10.2)
+        event_id = self.lock.gesture_event_id
+        self.assertFalse(self.lock.observe(tracked(3, [], False), now=10.4).found)
+        self.assertEqual(self.lock.state, "TEMPORARILY_LOST")
+        recovered = self.lock.observe(tracked(4, [candidate(8, y=0, w=361,
+                                                  h=480, conf=.8)], False), now=10.6)
+        self.assertTrue(recovered.found)
+        self.assertEqual(self.lock.reason, "VISUAL_REACQUIRED_GESTURE_REQUIRED")
+        self.assertEqual(self.lock.gesture_event_id, event_id)
 
     def test_occlusion_and_crossing_immediate_loss(self):
         self.acquire()

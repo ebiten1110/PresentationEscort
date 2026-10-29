@@ -237,6 +237,9 @@
             ? " / 上下目標 " + fmt(follow.pitch_target_deg) + "°" +
               "（実測報告 " + fmt(head && head.pitch_deg) + "°、速度上限 " +
               fmt(status.pitch_speed_limit_deg_s) + "°/秒）" +
+              (status.relative_pitch_reference
+                ? " / 上下は初回ロック時の顔高さ基準（物理原点の校正ではない）"
+                : " / 上下は画面中央基準") +
               (follow.pitch_at_limit ? " / 上下可動域の端" : "") +
               (!follow.pitch_aim_valid ? " / 顔位置の信頼性不足で上下保持" : "")
             : " / 上下追従OFF")
