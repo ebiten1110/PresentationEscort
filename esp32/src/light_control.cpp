@@ -68,6 +68,7 @@ static bool errorBlinkVisible = false;
 static unsigned long lastBlinkTimeMs = 0;
 static unsigned long lastWaitRefreshMs = 0;
 static bool waitRequested = false;
+static bool previouslyArmed = false;
 
 
 // ============================================================
@@ -173,6 +174,7 @@ void initLightControl() {
   currentMode = LightMode::RED;
   waitRequested = false;
   lastWaitRefreshMs = 0;
+  previouslyArmed = false;
   errorBlinkVisible = false;
   lastBlinkTimeMs = millis();
 
@@ -206,6 +208,12 @@ void updateLightControl() {
   // The ESP32 watchdog, not a GUI claim, determines whether tracking is on.
   // WHITE is visible only while firmware is ARMED. No motor command bypass.
   const bool armed = isSafetyMotionAllowed();
+  // Any transition out of ARMED means motion stopped (including watchdog
+  // timeout). Immediately drop the old yellow lease, so failure looks RED.
+  if (previouslyArmed && !armed) {
+    waitRequested = false;
+  }
+  previouslyArmed = armed;
   const unsigned long now = millis();
   const bool freshWait = waitRequested && !armed
       && (now - lastWaitRefreshMs < WAIT_LED_LEASE_MS);
