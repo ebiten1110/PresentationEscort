@@ -184,6 +184,53 @@ class GestureAutoRuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.status()["gesture_control_enabled"])
         self.assertNotIn("SAFETY_ARM", self.uart.commands)
 
+    def test_led_color_transitions_follow_safety_and_wait(self):
+        self.assertEqual(self.runtime.status()["led_indicated_color"], "RED")
+        self.assertTrue(self.runtime.action("gesture_on")["ok"])
+        wait_for(lambda: "RGB_YELLOW" in self.uart.commands)
+        self.assertEqual(self.runtime.status()["led_indicated_color"], "YELLOW")
+        self.assertNotIn("SAFETY_ARM", self.uart.commands)
+        for i in range(1, 11):
+            self.runtime.process_detection(frame(i), 55.)
+        wait_for(lambda: self.runtime.status()["mode"] == "AUTO")
+        self.assertEqual(self.runtime.status()["led_indicated_color"], "WHITE")
+        self.runtime.action("stop")
+        wait_for(lambda: self.runtime.status()["led_indicated_color"] == "RED")
+        wait_for(lambda: self.uart.commands[-1] == "RGB_RED")
+
+    def test_small_face_offset_moves_head_without_body_turn(self):
+        from person_target_adapter import detection_to_person_target
+        target = detection_to_person_target(DetectionResult(
+            found=True, center_x=182, center_y=120, width=80,
+            height=155, confidence=.90, class_id=0,
+            class_name="person", frame_width=320, frame_height=240,
+        ))
+        planner = HeadBodyTurnPlanner(invert_horizontal=True)
+        poses = []
+        for i in range(15):
+            plan = planner.step(target, now=1.0+i*.10, head_yaw_feedback_deg=0.,
+                                head_feedback_fresh=True, body_idle=True)
+            if plan.head_pose_command:
+                poses.append(plan.head_pose_command)
+            self.assertIsNone(plan.body_command)
+        self.assertTrue(poses, "small offsets should drive the neck")
+
+    def test_large_offset_turns_before_target_exits_frame(self):
+        from person_target_adapter import detection_to_person_target
+        target = detection_to_person_target(DetectionResult(
+            found=True, center_x=268, center_y=120, width=75,
+            height=155, confidence=.90, class_id=0,
+            class_name="person", frame_width=320, frame_height=240,
+        ))
+        planner = HeadBodyTurnPlanner(invert_horizontal=True)
+        plans = [
+            planner.step(target, now=1.+i*.10, head_yaw_feedback_deg=0.,
+                         head_feedback_fresh=True, body_idle=True)
+            for i in range(20)
+        ]
+        self.assertTrue(any(p.body_command for p in plans))
+        self.assertTrue(all(p.target_found for p in plans))
+
     def test_horizontal_direction_inverted_from_legacy(self):
         target = detection_to_person_target(DetectionResult(
             found=True, class_id=0, class_name="person", confidence=.90,
