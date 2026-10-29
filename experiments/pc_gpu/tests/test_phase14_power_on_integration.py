@@ -58,10 +58,12 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertEqual(r.status()["lock_state"], "TRACKING")
         until(lambda: r.status()["fw_safety"] == "DISARMED")
 
-    def test_single_presenter_auto_selected_without_arming(self):
+    def test_gesture_selects_person_but_never_auto_arms_by_default(self):
         r = self.launch(body_enabled=True)
         for seq in range(1, 7):
-            r.process_detection(frame(seq), 65.)
+            item = frame(seq)
+            item.gesture_indices = [0]
+            r.process_detection(item, 65.)
         status = r.status()
         self.assertEqual(status["lock_state"], "TRACKING")
         self.assertTrue(status["presenter_selected"])
@@ -72,7 +74,9 @@ class RealPowerOnTests(unittest.TestCase):
     def test_transient_loss_stops_but_reuses_same_presenter_without_auto_arm(self):
         r = self.launch(body_enabled=True)
         for seq in range(1, 7):
-            r.process_detection(frame(seq), 65.)
+            item = frame(seq)
+            item.gesture_indices = [0]
+            r.process_detection(item, 65.)
         self.assertTrue(r.action("auto")["ok"])
         until(lambda: r.status()["mode"] == "AUTO")
         r.process_detection(frame(7, visible=False), 65.)
