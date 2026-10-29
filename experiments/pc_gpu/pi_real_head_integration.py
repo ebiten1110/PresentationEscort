@@ -32,13 +32,17 @@ _POSE = re.compile(r"^HEAD_POSE_SET:([-+]?\d+(?:\.\d+)?),([-+]?\d+(?:\.\d+)?)$")
 class HeadOnlyPlanner(V883PersonDualLoop):
     """Limit the planner's internal state, optionally using calibrated pitch."""
 
-    def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0):
+    def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0,
+                 invert_horizontal: bool = False):
         super().__init__()
         self.pitch_min = pitch_min
         self.pitch_max = pitch_max
+        self.invert_horizontal = invert_horizontal
 
-    def step(self, *args, **kwargs):
-        plan = super().step(*args, **kwargs)
+    def step(self, target, *args, **kwargs):
+        if self.invert_horizontal:
+            target = replace(target, error_x=-target.error_x)
+        plan = super().step(target, *args, **kwargs)
         self.yaw_target_deg = max(-3.0, min(3.0, self.yaw_target_deg))
         self.pitch_target_deg = max(self.pitch_min, min(self.pitch_max, self.pitch_target_deg))
         self.body_candidate = None
@@ -61,13 +65,15 @@ class HeadBodyTurnPlanner(V883PersonDualLoop):
 
     def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0,
                  stable_frames: int = 4, settle_s: float = 1.0,
-                 edge_fraction: float = 0.24):
+                 edge_fraction: float = 0.24,
+                 invert_horizontal: bool = False):
         super().__init__()
         self.pitch_min = pitch_min
         self.pitch_max = pitch_max
         self.stable_frames = stable_frames
         self.settle_s = settle_s
         self.edge_fraction = edge_fraction
+        self.invert_horizontal = invert_horizontal
         self._turn_proposals = 0
         self._proposal_direction = None
 
@@ -77,6 +83,8 @@ class HeadBodyTurnPlanner(V883PersonDualLoop):
         self._proposal_direction = None
 
     def step(self, target, *, now, **kwargs):
+        if self.invert_horizontal:
+            target = replace(target, error_x=-target.error_x)
         plan = super().step(target, now=now, **kwargs)
         self.yaw_target_deg = max(-3.0, min(3.0, self.yaw_target_deg))
         self.pitch_target_deg = max(self.pitch_min, min(self.pitch_max, self.pitch_target_deg))
@@ -189,13 +197,18 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  pitch_bounds: tuple[float, float] = (0.0, 0.0),
                  turn_stable_frames: int = 4,
                  turn_settle_seconds: float = 1.0,
-                 turn_edge_fraction: float = .24) -> None:
+                 turn_edge_fraction: float = .24,
+                 invert_horizontal: bool = True) -> None:
         if body_enabled and not head_enabled:
             raise ValueError("body turns require head control opt-in")
         super().__init__()
-        # Single stable presenter auto-selected for convenience. Motion remains
-        # disarmed until explicit operator AUTO. Short loss still issues STOP.
-        self.presenter = PresenterLock(auto_select_single=True, transient_recovery_s=0.9)
+        # Gesture selects the actual person; never silently select a passerby.
+        self.presenter = PresenterLock(gesture_enabled=True,
+                                       gesture_confirm_frames=4,
+                                       transient_recovery_s=0.9)
+        self.gesture_control_enabled = False
+        self._gesture_handled_event = 0
+        self.invert_horizontal = invert_horizontal
         self._preview_jpeg: Optional[bytes] = None
         self._preview_resolution: Optional[str] = None
         # Superclass has not started any threads or issued any commands.
@@ -210,9 +223,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1],
                 stable_frames=turn_stable_frames,
                 settle_s=turn_settle_seconds,
-                edge_fraction=turn_edge_fraction
+                edge_fraction=turn_edge_fraction,
+                invert_horizontal=invert_horizontal
             ) if body_enabled else HeadOnlyPlanner(
-                pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1])),
+                pitch_min=pitch_bounds[0], pitch_max=pitch_bounds[1],
+                invert_horizontal=invert_horizontal)),
             enable_actuation=head_enabled,
         )
         self._feedback = Esp32FeedbackPoller(self.sink, self.controller)
@@ -321,6 +336,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 if follow is not None else None
             )
             status["camera_resolution"] = self._preview_resolution
+            status["gesture_control_enabled"] = self.gesture_control_enabled
+            status["horizontal_direction"] = "REVERSED_FOR_OPERATOR" if self.invert_horizontal else "LEGACY"
             status["simulation"] = False
             status["uart_poll_error"] = self._uart_poll_error
             status["uart_last_safety_event"] = self.sink.last_safety_event
@@ -362,8 +379,36 @@ class LockedRealRuntime(LockedSimulationRuntime):
             )
             return status
 
+    def process_detection(self, detection, rtt_ms: float) -> None:
+        with self._guard:
+            super().process_detection(detection, rtt_ms)
+            current_event = self.presenter.gesture_event_id
+            if current_event != self._gesture_handled_event:
+                self._gesture_handled_event = current_event
+                # Only authenticated opt-in enables gesture-initiated ARM.
+                # One gesture event gets one ARM attempt. Reappearance alone
+                # or repeated held hands cannot cause spontaneous re-ARM.
+                if self.gesture_control_enabled and self.status()["auto_ready"]:
+                    result = self.action("auto")
+                    self._last_event = ("GESTURE_AUTO_ARM_REQUESTED" if result.get("ok")
+                                        else "GESTURE_ARM_BLOCKED_" + str(result.get("error")))
+
     def action(self, action: str) -> dict:
         with self._guard:
+            if action == "gesture_on":
+                if not self.head_enabled or self.gateway.status().safety.mode != Mode.SAFE:
+                    return {"ok": False, "error": "GESTURE_STANDBY_REQUIRES_SAFE"}
+                self.gesture_control_enabled = True
+                self.presenter.clear("WAIT_BOTH_HANDS_OVER_HEAD")
+                self._gesture_handled_event = self.presenter.gesture_event_id
+                return {"ok": True, "gesture_control_enabled": True}
+            if action == "gesture_off":
+                self.gesture_control_enabled = False
+                super().action("stop")
+                self.presenter.clear("GESTURE_STANDBY_DISABLED")
+                return {"ok": True, "gesture_control_enabled": False}
+            if action in ("stop", "estop"):
+                self.gesture_control_enabled = False
             if action == "manual":
                 return {"ok": False, "error": "BODY_MOVEMENT_NOT_APPROVED"}
             if action in {"auto", "reset"} and not self.head_enabled:
@@ -424,6 +469,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--turn-stable-frames", type=int, default=4)
     ap.add_argument("--turn-settle-seconds", type=float, default=1.0)
     ap.add_argument("--turn-edge-fraction", type=float, default=.24)
+    ap.add_argument("--legacy-horizontal-direction", action="store_true",
+                    help="Restore previous right/left tracking sign if physical test requires")
     ap.add_argument("--bench-secured", action="store_true")
     ap.add_argument("--neutral-calibrated", action="store_true")
     ap.add_argument("--physical-cutoff-tested", action="store_true")
@@ -469,6 +516,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         turn_stable_frames=args.turn_stable_frames,
         turn_settle_seconds=args.turn_settle_seconds,
         turn_edge_fraction=args.turn_edge_fraction,
+        invert_horizontal=not args.legacy_horizontal_direction,
     )
     worker = None
     server = None
