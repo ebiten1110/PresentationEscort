@@ -65,7 +65,7 @@ class HeadBodyTurnPlanner(V883PersonDualLoop):
 
     def __init__(self, *, pitch_min: float = 0.0, pitch_max: float = 0.0,
                  stable_frames: int = 4, settle_s: float = 1.0,
-                 edge_fraction: float = 0.24,
+                 edge_fraction: float = 0.15,
                  invert_horizontal: bool = False):
         super().__init__()
         self.pitch_min = pitch_min
@@ -99,7 +99,12 @@ class HeadBodyTurnPlanner(V883PersonDualLoop):
             normalized_error = abs(target.error_x) / float(target.frame_width)
             settled = (self.last_turn_completed_at is None or
                        now - self.last_turn_completed_at >= self.settle_s)
-            if normalized_error < self.edge_fraction or not settled:
+            # Head servo handles smaller movements. Only after yaw reaches
+            # its calibrated boundary and the face approaches the edge do
+            # we request a feedback-gated body turn while vision is still valid.
+            head_near_limit = abs(self.yaw_target_deg) >= 2.5
+            if (normalized_error < self.edge_fraction or
+                    not head_near_limit or not settled):
                 reason = "BODY_WAIT_TARGET_EDGE_OR_SETTLING"
                 body_command = None
                 self._turn_proposals = 0
@@ -197,7 +202,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                  pitch_bounds: tuple[float, float] = (0.0, 0.0),
                  turn_stable_frames: int = 4,
                  turn_settle_seconds: float = 1.0,
-                 turn_edge_fraction: float = .24,
+                 turn_edge_fraction: float = .15,
                  invert_horizontal: bool = True) -> None:
         if body_enabled and not head_enabled:
             raise ValueError("body turns require head control opt-in")
@@ -523,7 +528,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--pitch-max-deg", type=float, default=None)
     ap.add_argument("--turn-stable-frames", type=int, default=4)
     ap.add_argument("--turn-settle-seconds", type=float, default=1.0)
-    ap.add_argument("--turn-edge-fraction", type=float, default=.24)
+    ap.add_argument("--turn-edge-fraction", type=float, default=.15)
     ap.add_argument("--legacy-horizontal-direction", action="store_true",
                     help="Restore previous right/left tracking sign if physical test requires")
     ap.add_argument("--bench-secured", action="store_true")
