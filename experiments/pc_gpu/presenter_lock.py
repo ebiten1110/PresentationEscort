@@ -51,6 +51,11 @@ class PresenterLock:
         self.candidates: list[PersonBox] = []
         self._history: dict[int, tuple[float, list[PersonBox]]] = {}
         self._locked: Optional[PersonBox] = None
+        self._locked_track_id: Optional[int] = None
+        self._candidate_track_ids: list[Optional[int]] = []
+        self._last_confirmed_at: Optional[float] = None
+        self._velocity_x = 0.0
+        self._velocity_y = 0.0
         self._locked_aim: Optional[tuple[int, int]] = None
         self._locked_aim_source: str = ""
         self.locked = False
@@ -63,6 +68,7 @@ class PresenterLock:
         self._frame_time = None
         self._frame_size = None
         self.candidates = []
+        self._candidate_track_ids = []
         self._history.clear()
         self._gesture_candidate = None
         self._gesture_streak = 0
@@ -74,6 +80,10 @@ class PresenterLock:
 
     def clear(self, reason: str = "OPERATOR_SELECTION_REQUIRED") -> None:
         self._locked = None
+        self._locked_track_id = None
+        self._last_confirmed_at = None
+        self._velocity_x = 0.0
+        self._velocity_y = 0.0
         self._locked_aim = None
         self._locked_aim_source = ""
         self._gesture_candidate = None
@@ -89,6 +99,10 @@ class PresenterLock:
 
     def _lose(self, reason: str) -> None:
         self._locked = None
+        self._locked_track_id = None
+        self._last_confirmed_at = None
+        self._velocity_x = 0.0
+        self._velocity_y = 0.0
         self._locked_aim = None
         self._locked_aim_source = ""
         self._gesture_candidate = None
@@ -169,8 +183,19 @@ class PresenterLock:
                 self._lose("INVALID_PERSON_BOX")
                 return suppressed
             candidates.append(box)
+        track_ids = detection.track_ids
+        if (not isinstance(track_ids, list) or
+                (track_ids and len(track_ids) != len(candidates)) or
+                any((item is not None and
+                     (type(item) is not int or item < 0))
+                    for item in track_ids)):
+            self.candidates = []
+            self._lose("INVALID_TRACK_IDS")
+            return suppressed
         previous_candidate_count = len(self.candidates)
         self.candidates = candidates
+        self._candidate_track_ids = track_ids
+
         self._last_gestures = detection.gesture_indices if isinstance(detection.gesture_indices, list) else []
         self._history[self._last_seq] = (now, list(candidates))
         self._history = {
@@ -255,7 +280,30 @@ class PresenterLock:
 
         original = self._locked
         allowed: list[PersonBox] = []
-        for box in candidates:
+        # Constant-velocity prediction is a matching hint, never a motor target.
+        # Only confirmed camera measurements update it (not missing frames).
+        elapsed = (max(0.0, now - self._last_confirmed_at)
+                   if self._last_confirmed_at is not None else 0.0)
+        horizon = min(elapsed, 0.35)
+        predicted_x = original.cx + self._velocity_x * horizon
+        predicted_y = original.cy + self._velocity_y * horizon
+        for candidate_index, box in enumerate(candidates):
+            same_gpu_track = bool(
+                track_ids and self._locked_track_id is not None
+                and track_ids[candidate_index] == self._locked_track_id)
+            # A stable GPU association may span more than half a small,
+            # distant bounding box. Keep an absolute frame-space bound,
+            # a finite time window, and the existing crowd-ambiguity gate.
+            if (same_gpu_track and elapsed <= 0.45
+                    and .45 <= box.width / original.width <= 2.2
+                    and .45 <= box.height / original.height <= 2.2
+                    and abs(box.cx - predicted_x) <= max(
+                        original.width * 1.0, detection.frame_width * .19)
+                    and abs(box.cy - predicted_y) <= max(
+                        original.height * .65, detection.frame_height * .14)):
+                allowed.append(box)
+                continue
+
             # Strict 0.5-body-width displacement and limited size variation.
             if (
                 0.55 <= box.width / original.width <= 1.80
@@ -335,6 +383,22 @@ class PresenterLock:
                         and overlap_h >= min(original.height, candidate.height) * .45)
             if cross or standing:
                 allowed = [candidate]
+        # A temporarily missing, single high-confidence person can return
+        # near the predicted position even without the original overlap.
+        # This does not create an ARM; Pi requires 3 new visual confirmations.
+        if (not allowed and self.state == "TEMPORARILY_LOST"
+                and self._recovery_deadline is not None
+                and now <= self._recovery_deadline
+                and elapsed <= .65 and len(candidates) == 1
+                and candidates[0].confidence >= .78):
+            candidate = candidates[0]
+            if (.55 <= candidate.width / original.width <= 1.8
+                    and .55 <= candidate.height / original.height <= 2.0
+                    and abs(candidate.cx - predicted_x) <= max(
+                        original.width * .8, detection.frame_width * .14)
+                    and abs(candidate.cy - predicted_y) <= max(
+                        original.height * .55, detection.frame_height * .12)):
+                allowed = [candidate]
         # During a bounded detector dropout, retain a single significantly
         # overlapping person as a VISUAL hint only. The first lost frame
         # already disarmed AUTO; this must not issue any ARM request.
@@ -375,11 +439,26 @@ class PresenterLock:
             self._lose("AMBIGUOUS_NEARBY_PERSON")
             return suppressed
         self._recovery_deadline = None
+        if self._last_confirmed_at is not None:
+            dt = now - self._last_confirmed_at
+            if .025 <= dt <= .50:
+                # Bound image velocity: a wrong association must not predict
+                # across the entire frame on the next dropped detection.
+                vx = (chosen.cx - original.cx) / dt
+                vy = (chosen.cy - original.cy) / dt
+                self._velocity_x = max(-700., min(700., vx))
+                self._velocity_y = max(-500., min(500., vy))
+        else:
+            self._velocity_x = self._velocity_y = 0.0
+        self._last_confirmed_at = now
         self._locked = chosen
         self.state = "TRACKING"
         self.reason = ("VISUAL_REACQUIRED_GESTURE_REQUIRED"
                        if self._needs_resume_gesture else "LOCKED_GEOMETRY_ONLY")
         chosen_index = next((i for i, box in enumerate(candidates) if box is chosen), -1)
+        self._locked_track_id = (
+            track_ids[chosen_index]
+            if track_ids and chosen_index >= 0 else None)
         if self._needs_resume_gesture:
             raised = (isinstance(detection.gesture_indices, list) and
                       chosen_index in detection.gesture_indices and
@@ -489,6 +568,12 @@ class PresenterLock:
         if len(matches) != 1 or self._near_another(matches[0], self.candidates):
             return False, "SELECTION_AMBIGUOUS_OR_MOVED"
         self._locked = matches[0]
+        selected_index = self.candidates.index(matches[0])
+        self._locked_track_id = (
+            self._candidate_track_ids[selected_index]
+            if self._candidate_track_ids else None)
+        self._last_confirmed_at = now
+        self._velocity_x = self._velocity_y = 0.0
         self.locked = True
         self.state = "SELECTED_WAIT_NEXT_FRAME"
         self._recovery_deadline = None
@@ -504,6 +589,9 @@ class PresenterLock:
         return {
             "lock_state": self.state if recent else "NO_FRESH_FRAME",
             "lock_reason": self.reason,
+            "tracker_id": self._locked_track_id,
+            "velocity_px_s": [round(self._velocity_x, 1),
+                              round(self._velocity_y, 1)],
             "gesture_enabled": self.gesture_enabled,
             "gesture_event_id": self.gesture_event_id,
             "gesture_hint": "両手を頭の上に挙げて、そのまま保持",

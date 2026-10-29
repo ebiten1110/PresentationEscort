@@ -23,6 +23,7 @@ class ServerConfig:
     confidence: float
     image_size: int
     device: str
+    tracking: bool = False
 
 
 class PersonDetector:
@@ -35,11 +36,16 @@ class PersonDetector:
         self.last_finish_time: Optional[float] = None
         self.tracker = PersonTracker(min_confidence=config.confidence)
         self.frame_seq = 0
-        print("[Model] ready")
+        print("[Model] ready; tracking=" + ("ByteTrack" if config.tracking else "off"))
 
     def reset_tracking(self) -> None:
         """Clear person-lock state on every new Pi connection."""
         self.tracker.reset()
+        predictor = getattr(self.model, "predictor", None)
+        if predictor is not None:
+            for tracker in getattr(predictor, "trackers", ()) or ():
+                if hasattr(tracker, "reset"):
+                    tracker.reset()
         self.last_finish_time = None
         self.frame_seq = 0
 
@@ -47,14 +53,23 @@ class PersonDetector:
         frame_height, frame_width = frame.shape[:2]
         self.frame_seq += 1
         started = time.perf_counter()
-        results = self.model.predict(
+        # ByteTrack uses low-score boxes internally to bridge short occlusions.
+        # The external presenter-lock protocol still accepts only trusted
+        # >= config.confidence boxes; low-score results never steer motors.
+        options = dict(
             source=frame,
-            conf=self.config.confidence,
+            conf=min(0.18, self.config.confidence) if self.config.tracking
+                 else self.config.confidence,
             imgsz=self.config.image_size,
             classes=[0],
             device=self.config.device,
             verbose=False,
         )
+        if self.config.tracking:
+            results = self.model.track(persist=True, tracker="bytetrack.yaml",
+                                       **options)
+        else:
+            results = self.model.predict(**options)
 
         inference_ms = (time.perf_counter() - started) * 1000.0
         now = time.perf_counter()
@@ -67,6 +82,7 @@ class PersonDetector:
 
         candidates: list[PersonBox] = []
         pose_points: list[list[list[float]]] = []
+        candidate_track_ids: list[Optional[int]] = []
         if results:
             detected_boxes = results[0].boxes
             if detected_boxes is not None:
@@ -78,12 +94,16 @@ class PersonDetector:
                     y1 = max(0, min(int(round(y1)), frame_height - 1))
                     x2 = max(x1 + 1, min(int(round(x2)), frame_width))
                     y2 = max(y1 + 1, min(int(round(y2)), frame_height))
+                    track_id = None
+                    if (self.config.tracking and detected_boxes.id is not None):
+                        track_id = int(detected_boxes.id[idx].item())
                     candidates.append(
                         PersonBox(
                             x1=x1, y1=y1, x2=x2, y2=y2,
                             confidence=float(detected_boxes.conf[idx].item()),
                         )
                     )
+                    candidate_track_ids.append(track_id)
                     if self.gesture_pose_model and results[0].keypoints is not None:
                         points = results[0].keypoints.data[idx].tolist()
                         pose_points.append(points)
@@ -101,6 +121,12 @@ class PersonDetector:
             for box in candidates
             if box.valid(frame_width, frame_height, self.config.confidence)
         ]
+        # V2 optional metadata stays aligned with the *filtered* people.
+        # A tracker ID is evidence of frame continuity, never a biometric ID.
+        track_ids = [
+            candidate_track_ids[i] for i, box in enumerate(candidates)
+            if box.valid(frame_width, frame_height, self.config.confidence)
+        ] if self.config.tracking else []
         gestures: list[int] = []
         aims: list[dict] = []
         if self.gesture_pose_model:
@@ -117,6 +143,7 @@ class PersonDetector:
             protocol_version=2,
             frame_seq=self.frame_seq,
             people=people,
+            track_ids=track_ids,
             gesture_indices=gestures,
             aim_points=aims,
             frame_width=frame_width,
@@ -201,6 +228,8 @@ def parse_args() -> ServerConfig:
         default="0",
         help="Ultralytics device, e.g. 0, cpu, cuda:0",
     )
+    parser.add_argument("--tracker", action="store_true",
+                        help="Enable persistent GPU ByteTrack for frame continuity")
     args = parser.parse_args()
     return ServerConfig(
         host=args.host,
@@ -209,6 +238,7 @@ def parse_args() -> ServerConfig:
         confidence=args.confidence,
         image_size=args.image_size,
         device=args.device,
+        tracking=args.tracker,
     )
 
 

@@ -90,7 +90,8 @@ exec "$PYTHON_BIN" experiments/pc_gpu/pi_real_head_integration.py \
   --enable-head-test --enable-body-turns --body-turn-calibrated \
   --pitch-calibrated --pitch-min-deg -2 --pitch-max-deg 2 \
   --relative-pitch-reference --reverse-body-turn-direction \
-  --distance-adaptive-head --responsive-follow --auto-recalibrate-brief-loss \
+  --distance-adaptive-head --responsive-follow --vision-verified-head \
+  --camera-horizontal-fov-deg 65 --auto-recalibrate-brief-loss \
   --head-speed-deg-per-second 3.5 --pitch-speed-deg-per-second 2.5 \
   --turn-stable-frames 3 --turn-settle-seconds 0.7 --turn-edge-fraction 0.15 \
   --camera-width 640 --camera-height 480 --camera-fps 30 \

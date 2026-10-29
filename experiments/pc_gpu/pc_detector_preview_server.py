@@ -100,6 +100,8 @@ def main() -> None:
     parser.add_argument("--no-pose", action="store_true",
                         help="Legacy person boxes only (gesture control disabled)")
     parser.add_argument("--device", default="0")
+    parser.add_argument("--no-tracker", action="store_true",
+                        help="Disable default GPU ByteTrack continuity for diagnosis")
     args = parser.parse_args()
 
     # Do not accidentally publish unauthenticated camera inference on a LAN.
@@ -107,7 +109,8 @@ def main() -> None:
         parser.error("Live preview mode only permits loopback host; use SSH tunnel")
 
     config = ServerConfig(args.host, args.port, args.model,
-                          args.confidence, args.image_size, args.device)
+                          args.confidence, args.image_size, args.device,
+                          tracking=not args.no_tracker)
     detector = PersonDetector(config,
                               gesture_pose_model=None if args.no_pose else args.pose_model)
     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
