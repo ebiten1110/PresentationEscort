@@ -31,6 +31,11 @@ class DetectionResult:
     protocol_version: int = 1
     frame_seq: int = 0
     people: list[dict[str, Any]] = field(default_factory=list)
+    # V2 optional pose extension, aligned to people[] order.
+    # Unsupported/old PC model supplies empty defaults (no gesture permission).
+    gesture_indices: list[int] = field(default_factory=list)
+    aim_points: list[dict[str, Any]] = field(default_factory=list)
+
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
