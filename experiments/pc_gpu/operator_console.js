@@ -30,6 +30,8 @@
     const json = await result.json();
     if (result.status === 401) {
       connection = false;
+      document.body.classList.remove("authorized");
+      byId("video-frame").classList.remove("has-preview");
       controls.forEach(id => byId(id).disabled = true);
       throw Error("トークンが無効です");
     }
