@@ -57,6 +57,7 @@ class RealPowerOnTests(unittest.TestCase):
             r.process_detection(frame(i), 65.)
         self.assertEqual(r.status()["lock_state"], "TRACKING")
         until(lambda: r.status()["fw_safety"] == "DISARMED")
+        until(lambda: r.status()["esp32_head_feedback"]["fresh"])
 
     def test_gesture_selects_person_but_never_auto_arms_by_default(self):
         r = self.launch(body_enabled=True)
@@ -64,6 +65,7 @@ class RealPowerOnTests(unittest.TestCase):
             item = frame(seq)
             item.gesture_indices = [0]
             r.process_detection(item, 65.)
+        until(lambda: r.status()["esp32_head_feedback"]["fresh"])
         status = r.status()
         self.assertEqual(status["lock_state"], "TRACKING")
         self.assertTrue(status["presenter_selected"])
@@ -77,6 +79,7 @@ class RealPowerOnTests(unittest.TestCase):
             item = frame(seq)
             item.gesture_indices = [0]
             r.process_detection(item, 65.)
+        until(lambda: r.status()["esp32_head_feedback"]["fresh"])
         self.assertTrue(r.action("auto")["ok"])
         until(lambda: r.status()["mode"] == "AUTO")
         r.process_detection(frame(7, visible=False), 65.)
@@ -114,6 +117,51 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertEqual(r.status()["actuation_scope"], "MONITOR_ONLY")
         self.assertNotIn("SAFETY_ARM", self.uart.commands)
         self.assertFalse(any(cmd.startswith("HEAD_POSE_SET:") for cmd in self.uart.commands))
+
+    def test_monitor_only_with_nonzero_parked_pitch_does_not_send_remote_estop(self):
+        # Real diagnostics showed MCU yaw=0.8, pitch=2.0 while the head is
+        # disabled and the configured pitch actuation range is (0, 0).
+        # Passive observation must never turn that into SAFETY_ESTOP.
+        self.uart.yaw_deg = 0.8
+        self.uart.pitch_deg = 2.0
+        r = self.launch(head_enabled=False)
+        until(lambda: r.status()["esp32_head_feedback"]["pitch_deg"] == 2.0)
+        for seq in range(1, 10):
+            r.process_detection(frame(seq), 145.)
+        status = r.status()
+        self.assertEqual(status["mode"], "SAFE")
+        self.assertEqual(status["fw_safety"], "DISARMED")
+        self.assertEqual(status["head_feedback_error"], "PITCH_OUTSIDE_CALIBRATED_RANGE")
+        self.assertEqual(status["head_pitch_approved_range"], [0.0, 0.0])
+        self.assertNotIn("SAFETY_ESTOP", self.uart.commands)
+        self.assertNotIn("SAFETY_ARM", self.uart.commands)
+        self.assertFalse(any(c.startswith("HEAD_POSE_SET:") for c in self.uart.commands))
+
+    def test_outside_calibration_in_safe_blocks_auto_without_latching(self):
+        self.uart.pitch_deg = 2.0
+        r = self.launch()
+        self.select(r)
+        self.assertEqual(r.status()["head_feedback_error"],
+                         "PITCH_OUTSIDE_CALIBRATED_RANGE")
+        self.assertFalse(r.status()["auto_ready"])
+        blocked = r.action("auto")
+        self.assertEqual(blocked["error"], "HEAD_FEEDBACK_NOT_CALIBRATED")
+        self.assertEqual(blocked["detail"], "PITCH_OUTSIDE_CALIBRATED_RANGE")
+        self.assertEqual(r.status()["mode"], "SAFE")
+        self.assertNotIn("SAFETY_ARM", self.uart.commands)
+        self.assertNotIn("SAFETY_ESTOP", self.uart.commands)
+
+    def test_unsafe_pitch_during_auto_still_remotely_estops(self):
+        r = self.launch()
+        self.select(r)
+        self.assertTrue(r.action("auto")["ok"])
+        until(lambda: r.status()["mode"] == "AUTO")
+        self.uart.pitch_deg = 2.0
+        until(lambda: r.status()["esp32_head_feedback"]["pitch_deg"] == 2.0)
+        r.process_detection(frame(6), 65.)
+        self.assertEqual(r.status()["mode"], "ESTOP")
+        self.assertIn("SAFETY_ESTOP", self.uart.commands)
+        until(lambda: r.status()["fw_safety"] == "LATCHED")
 
     def test_selected_presenter_only_yaw_stop_and_no_rearm(self):
         r = self.launch()

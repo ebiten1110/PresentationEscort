@@ -187,15 +187,28 @@
       byId("reason").textContent = fmt(status.reason);
       byId("last").textContent = fmt(status.last_command);
       byId("event").textContent = fmt(status.message);
-      byId("ready").textContent = status.auto_ready ? "可能" : "未準備（対象または通信未成立）";
+      byId("ready").textContent = status.auto_ready ? "可能"
+        : status.head_feedback_error === "PITCH_OUTSIDE_CALIBRATED_RANGE"
+          ? "未準備（上下角度が校正範囲外）"
+          : status.head_feedback_error === "YAW_OUTSIDE_APPROVED_RANGE"
+            ? "未準備（左右角度が許可範囲外）"
+            : "未準備（対象または通信未成立）";
       byId("lock-reason").textContent = fmt(status.lock_reason);
       const head = status.esp32_head_feedback;
       const walking = status.esp32_walking_feedback;
       const follow = status.follow_debug;
-      byId("esp32-head-feedback").textContent = head
+      const pitchBounds = status.head_pitch_approved_range;
+      const headWarning = status.head_feedback_error === "PITCH_OUTSIDE_CALIBRATED_RANGE" &&
+        Array.isArray(pitchBounds) && pitchBounds.length === 2
+          ? " / 注意：上下角度の許可範囲は " + fmt(pitchBounds[0]) + "～" +
+            fmt(pitchBounds[1]) + "°（診断専用なら駆動禁止のまま確認）"
+          : status.head_feedback_error === "YAW_OUTSIDE_APPROVED_RANGE"
+            ? " / 注意：左右角度が±3°の許可範囲外"
+            : "";
+      byId("esp32-head-feedback").textContent = (head
         ? (head.fresh ? "Yaw " + fmt(head.yaw_deg) + "° / Pitch " +
            fmt(head.pitch_deg) + "°（ESP32内部値）" : "テレメトリ未受信・期限切れ")
-        : "未対応";
+        : "未対応") + headWarning;
       byId("preview-status").textContent = status.preview_available === false
         ? "Piから未生成" : status.preview_age_ms == null
           ? "取得状態不明" : "画像生成から " + status.preview_age_ms + " ms";

@@ -386,18 +386,26 @@ class BoundedSearchController(RemotePersonController):
             feedback = self.telemetry.snapshot(now=current)
             self.planner._head_pitch_feedback_deg = (
                 feedback.head_pitch_deg if feedback.head_fresh else None)
-        if isinstance(self.planner, _SmoothHeadAiming) and self.planner.last_pose_send_at is None:
+        if isinstance(self.planner, _SmoothHeadAiming):
             feedback = self.telemetry.snapshot(now=current)
             if feedback.head_fresh and feedback.head_yaw_deg is not None:
                 yaw = feedback.head_yaw_deg
                 pitch = feedback.head_pitch_deg
                 if (not -3.0 <= yaw <= 3.0 or pitch is None or
                         not self.planner.pitch_min <= pitch <= self.planner.pitch_max):
-                    self.gateway.emergency_stop()
-                    return FollowCycle(Mode.ESTOP, False, self.planner.target_lost(),
-                                       False, False, "HEAD_FEEDBACK_OUTSIDE_APPROVED_RANGE")
-                self.planner.yaw_target_deg = yaw
-                self.planner.pitch_target_deg = pitch
+                    # An uncalibrated, parked servo angle is diagnostic data,
+                    # not a reason to remotely ESTOP a monitor-only session.
+                    # Never send SAFETY_ESTOP from passive camera processing.
+                    # In AUTO, however, unexpected feedback must still latch
+                    # immediately, even after a prior valid head command.
+                    if (self.enable_actuation and
+                            self.gateway.status(now=current).safety.mode == Mode.AUTO):
+                        self.gateway.emergency_stop()
+                        return FollowCycle(Mode.ESTOP, False, self.planner.target_lost(),
+                                           False, False, "HEAD_FEEDBACK_OUTSIDE_APPROVED_RANGE")
+                elif self.planner.last_pose_send_at is None:
+                    self.planner.yaw_target_deg = yaw
+                    self.planner.pitch_target_deg = pitch
         if not self.gateway.safety.recovering:
             return super().process(result, rtt_ms=rtt_ms, now=current)
         valid = detection_to_person_target(result) is not None and not result.error
@@ -478,6 +486,17 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self._search_direction: Optional[str] = None
         self._search_started_at = 0.0
         self._search_result = "IDLE"
+
+    def _head_feedback_error(self) -> Optional[str]:
+        """Report calibration readiness without changing ESP32 safety state."""
+        feedback = self.controller.telemetry.snapshot(now=time.monotonic())
+        if not feedback.head_fresh or feedback.head_yaw_deg is None or feedback.head_pitch_deg is None:
+            return "HEAD_FEEDBACK_NOT_FRESH"
+        if not -3.0 <= feedback.head_yaw_deg <= 3.0:
+            return "YAW_OUTSIDE_APPROVED_RANGE"
+        if not self.pitch_bounds[0] <= feedback.head_pitch_deg <= self.pitch_bounds[1]:
+            return "PITCH_OUTSIDE_CALIBRATED_RANGE"
+        return None
 
     def _search_candidate(self, detection, rtt_ms: float, now: float) -> Optional[str]:
         """Only a genuinely empty, sequential frame after a side-edge lock."""
@@ -765,6 +784,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status["head_only_test"] = self.head_enabled and not self.body_enabled
             status["body_motion_permitted"] = self.body_enabled
             status["pitch_tracking_enabled"] = self.pitch_bounds != (0.0, 0.0)
+            status["head_feedback_error"] = self._head_feedback_error()
+            status["head_pitch_approved_range"] = list(self.pitch_bounds)
             status["head_speed_limit_deg_s"] = self.head_speed_deg_s
             status["actuation_scope"] = (
                 "HEAD_YAW_3DEG_AND_FEEDBACK_GATED_BODY_TURNS" if self.body_enabled
@@ -784,6 +805,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 and presenter["lock_state"] == "TRACKING"
                 and status["mode"] == Mode.SAFE.value
                 and status["fw_safety"] == "DISARMED"
+                # Firmware ARM is not a head move. Missing head telemetry
+                # already blocks individual pose sends; a *known* angle
+                # outside the calibrated range must block ARM earlier.
+                and status["head_feedback_error"] not in (
+                    "YAW_OUTSIDE_APPROVED_RANGE", "PITCH_OUTSIDE_CALIBRATED_RANGE")
                 and not self.gateway.firmware_arm_pending("AUTO")
                 and not status["transport_fault"]
             )
@@ -867,7 +893,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                         "lock_state", "lock_reason", "selected_index", "presenter_selected")},
                     "safety": {key: state.get(key) for key in (
                         "mode", "reason", "fw_safety", "stop_reason", "fault_cause",
-                        "uart_last_safety_event", "uart_poll_error")},
+                        "uart_last_safety_event", "uart_poll_error",
+                        "head_feedback_error", "head_pitch_approved_range")},
                     "head_feedback": state.get("esp32_head_feedback"),
                     "follow": state.get("follow_debug"),
                 })
@@ -887,6 +914,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 "presenter_selected", "gesture_control_enabled",
                 "esp32_head_feedback", "esp32_walking_feedback", "follow_debug",
                 "search_state", "head_speed_limit_deg_s", "pitch_tracking_enabled",
+                "head_feedback_error", "head_pitch_approved_range",
             )
             snapshot = {key: state.get(key) for key in public_keys}
         return self._diagnostics.export(status=snapshot)
@@ -933,6 +961,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
                     return {"ok": True, "pending": True}
                 if state != Mode.SAFE or fw_state != "DISARMED":
                     return {"ok": False, "error": "ESP32_NOT_DISARMED_OR_NOT_READY"}
+                feedback_error = self._head_feedback_error()
+                if feedback_error in ("YAW_OUTSIDE_APPROVED_RANGE",
+                                      "PITCH_OUTSIDE_CALIBRATED_RANGE"):
+                    return {"ok": False, "error": "HEAD_FEEDBACK_NOT_CALIBRATED",
+                            "detail": feedback_error}
             response = super().action(action)
             if action == "auto" and response.get("pending"):
                 self._arm_wait_since = time.monotonic()
