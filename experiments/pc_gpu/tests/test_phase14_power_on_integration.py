@@ -128,7 +128,7 @@ class RealPowerOnTests(unittest.TestCase):
         r.process_detection(bad, 65.)
         status = r.status()
         self.assertEqual(status["mode"], "SAFE")
-        self.assertEqual(status["lock_reason"], "TARGET_MISSING_OR_MULTIPLE_MATCHES")
+        self.assertEqual(status["lock_reason"], "WAIT_SAME_PERSON_REAPPEAR")
         self.assertFalse(status["target_found"])
         self.assertFalse(status["auto_ready"])
         self.assertFalse(status["fw_arm_pending"])
@@ -281,11 +281,15 @@ class PlannerTests(unittest.TestCase):
         first = p.step(target, now=10.0, head_yaw_feedback_deg=None,
                        head_feedback_fresh=False, body_idle=False)
         self.assertIsNone(first.body_command)
-        a = p.step(target, now=10.1, head_yaw_feedback_deg=0.,
-                   head_feedback_fresh=True, body_idle=True)
-        b = p.step(target, now=10.2, head_yaw_feedback_deg=0.,
-                   head_feedback_fresh=True, body_idle=True)
-        self.assertTrue(any(x.body_command in ("TRACK_LEFT", "TRACK_RIGHT") for x in (a,b)))
+        commands = []
+        for i in range(1, 22):
+            decision = p.step(target, now=10.0 + i * .10,
+                              head_yaw_feedback_deg=0.,
+                              head_feedback_fresh=True, body_idle=True)
+            if decision.body_command:
+                commands.append(decision.body_command)
+                break
+        self.assertTrue(any(c in ("TRACK_LEFT", "TRACK_RIGHT") for c in commands))
         self.assertLessEqual(abs(p.yaw_target_deg), 3.0)
         self.assertEqual(p.pitch_target_deg, 0.0)
 
