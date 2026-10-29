@@ -58,6 +58,41 @@ class RealPowerOnTests(unittest.TestCase):
         self.assertEqual(r.status()["lock_state"], "TRACKING")
         until(lambda: r.status()["fw_safety"] == "DISARMED")
 
+    def test_single_presenter_auto_selected_without_arming(self):
+        r = self.launch(body_enabled=True)
+        for seq in range(1, 7):
+            r.process_detection(frame(seq), 65.)
+        status = r.status()
+        self.assertEqual(status["lock_state"], "TRACKING")
+        self.assertTrue(status["presenter_selected"])
+        self.assertTrue(status["auto_ready"])
+        self.assertEqual(status["mode"], "SAFE")
+        self.assertNotIn("SAFETY_ARM", self.uart.commands)
+
+    def test_transient_loss_stops_but_reuses_same_presenter_without_auto_arm(self):
+        r = self.launch(body_enabled=True)
+        for seq in range(1, 7):
+            r.process_detection(frame(seq), 65.)
+        self.assertTrue(r.action("auto")["ok"])
+        until(lambda: r.status()["mode"] == "AUTO")
+        r.process_detection(frame(7, visible=False), 65.)
+        self.assertEqual(r.status()["lock_state"], "TEMPORARILY_LOST")
+        self.assertFalse(r.status()["presenter_selected"])
+        self.assertEqual(r.status()["mode"], "SAFE")
+        r.process_detection(frame(8), 65.)
+        self.assertEqual(r.status()["lock_state"], "TRACKING")
+        self.assertEqual(r.status()["mode"], "SAFE")
+        self.assertEqual(self.uart.commands.count("SAFETY_ARM"), 1)
+
+    def test_calibrated_pitch_range_gate(self):
+        sink = HeadOnlySerialSink("mock-ch340", head_enabled=True, body_enabled=True,
+                                  pitch_min=-4., pitch_max=5.)
+        self.addCleanup(sink.close)
+        sink.send("HEAD_POSE_SET:2.0,4.0")
+        self.assertIn("HEAD_POSE_SET:2.0,4.0", self.uart.commands)
+        with self.assertRaises(ValueError):
+            sink.send("HEAD_POSE_SET:2.0,8.0")
+
     def test_power_on_does_not_arm_without_operator(self):
         r = self.launch()
         self.assertEqual(r.status()["servo_power_declared"], "ON_OPERATOR_DECLARED")
