@@ -289,6 +289,10 @@ class LockedRealRuntime(LockedSimulationRuntime):
             if not connected:
                 self._preview_jpeg = None
                 self._preview_resolution = None
+                # New PC connection must not inherit old operator gesture
+                # authorization. An operator must re-enable standby.
+                self.gesture_control_enabled = False
+                self._gesture_pending_event = 0
 
     def _poll_loop(self) -> None:
         """Real UART reader: persist errors beyond the next presenter event."""
