@@ -769,10 +769,11 @@ class LockedRealRuntime(LockedSimulationRuntime):
         if previous is None or not previous.target_valid:
             return False
         telemetry = self.controller.telemetry.snapshot(now=now)
-        # A moving leg turn is NOT a reason to tear down the tracking lease:
-        # no additional head/body command is permitted during recovery.
-        # This passive hold works even while the previous turn finishes.
-        return telemetry.head_fresh and not self.gateway.status().transport_fault
+        # A passive hold sends NO new pose or leg command. It does not need
+        # a head servo-angle sample to *remain stationary*; a stale sample
+        # still blocks every head command in the normal actuator gate.
+        # Existing body-turn completion does not cancel this short lease.
+        return not bool(getattr(self.gateway.status(), "transport_fault", False))
 
     def publish_preview(self, frame, detection) -> None:
         """Render a target-to-center vector, action zone and last seen bearing."""

@@ -94,7 +94,9 @@ class GuardTests(unittest.TestCase):
         self.assertFalse(runtime._can_hold_brief_visual_loss(lost, 65., 5.))
         runtime.presenter.candidates.pop()
         runtime.controller._pending_turn = "TRACK_LEFT"
-        self.assertFalse(runtime._can_hold_brief_visual_loss(lost, 65., 5.))
+        # Passive recovery holds AUTO but issues NO new motion commands.
+        # A body turn already finishing must not destroy the face lock.
+        self.assertTrue(runtime._can_hold_brief_visual_loss(lost, 65., 5.))
 
     def setUp(self):
         self.fake = FakeSerial()

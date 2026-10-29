@@ -37,6 +37,9 @@ class SearchTests(unittest.TestCase):
             power_declared="ON_OPERATOR_DECLARED")
         self.addCleanup(self.runtime.close)
         self.runtime.start()
+        # These tests isolate bounded search behavior; the new real-camera
+        # lock-on warmup has its own independent regression coverage.
+        self.runtime.controller.planner.set_actuation_gate = lambda allowed: None
         self.assertTrue(self.runtime.action("gesture_on")["ok"])
         for seq in range(1, 7):
             sample = frame(seq)
