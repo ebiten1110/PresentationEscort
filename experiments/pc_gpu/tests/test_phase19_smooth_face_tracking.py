@@ -97,6 +97,61 @@ class SmoothFaceTests(unittest.TestCase):
                              "body should take over while the distant head remains near neutral")
         self.assertLess(abs(turn.yaw_target_deg), 2.5)
 
+    def test_adaptive_close_person_uses_body_before_neck_hits_three_degrees(self):
+        target = sized_face_target(x=260, width=95, height=175)
+        planner = HeadBodyTurnPlanner(distance_adaptive_head=True,
+            stable_frames=2, head_speed_deg_s=3.5)
+        feedback = 0.
+        turned = False
+        for i in range(40):
+            plan = planner.step(target, now=1. + i * .12,
+                head_yaw_feedback_deg=feedback,
+                head_feedback_fresh=True, body_idle=True)
+            feedback = plan.yaw_target_deg
+            self.assertLessEqual(abs(feedback), 1.51)
+            if plan.body_command:
+                turned = True
+                break
+        self.assertTrue(turned, "body should take a large angular displacement")
+
+    def test_locked_center_does_not_reset_an_already_rotated_neck(self):
+        planner = HeadOnlyPlanner(distance_adaptive_head=True)
+        plan = planner.step(face_target(x=160, y=120), now=1.,
+            head_yaw_feedback_deg=-3., head_feedback_fresh=True)
+        self.assertEqual(plan.yaw_target_deg, -3.)
+        for i in range(1, 6):
+            plan = planner.step(face_target(x=160, y=120), now=1. + .15 * i,
+                head_yaw_feedback_deg=-3., head_feedback_fresh=True)
+            self.assertEqual(plan.yaw_target_deg, -3.)
+
+    def test_head_and_body_hold_until_armed_and_three_fresh_frames(self):
+        planner = HeadBodyTurnPlanner(distance_adaptive_head=True,
+            stable_frames=2, head_speed_deg_s=3.5,
+            pitch_min=-2., pitch_max=2.)
+        target = face_target(x=40, y=120)
+        planner.set_actuation_gate(False)
+        for i in range(8):
+            plan = planner.step(target, now=1. + .12 * i,
+                head_yaw_feedback_deg=-2.5,
+                head_pitch_feedback_deg=.3,
+                head_feedback_fresh=True, body_idle=True)
+            self.assertIsNone(plan.head_pose_command)
+            self.assertIsNone(plan.body_command)
+            self.assertEqual(plan.yaw_target_deg, -2.5)
+        planner.set_actuation_gate(True)
+        for i in range(3):
+            plan = planner.step(target, now=2. + .12 * i,
+                head_yaw_feedback_deg=-2.5,
+                head_pitch_feedback_deg=.3,
+                head_feedback_fresh=True, body_idle=True)
+            self.assertEqual(plan.reason, "TRACKING_STABILIZING")
+            self.assertIsNone(plan.head_pose_command)
+            self.assertIsNone(plan.body_command)
+        plan = planner.step(target, now=2.4,
+            head_yaw_feedback_deg=-2.5, head_pitch_feedback_deg=.3,
+            head_feedback_fresh=True, body_idle=True)
+        self.assertLessEqual(abs(plan.yaw_target_deg - (-2.5)), .5)
+
     def test_relative_pitch_reference_unpins_high_face_without_expanding_range(self):
         planner = HeadOnlyPlanner(pitch_min=-2., pitch_max=2.,
                                   relative_pitch_reference=True,

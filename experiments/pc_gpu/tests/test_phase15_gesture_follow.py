@@ -178,6 +178,33 @@ class GestureAutoRuntimeTests(unittest.TestCase):
         wait_for(lambda: self.runtime.status()["mode"] == "AUTO")
         self.assertEqual(self.uart.commands.count("SAFETY_ARM"), 2)
 
+    def test_passive_dropout_recalibrates_without_new_gesture(self):
+        self.runtime.auto_recalibrate_brief_loss = True
+        self.assertTrue(self.runtime.action("gesture_on")["ok"])
+        for i in range(1, 10):
+            self.runtime.process_detection(frame(i), 55.)
+        wait_for(lambda: self.runtime.status()["mode"] == "AUTO")
+        original_event = self.runtime.presenter.gesture_event_id
+        self.runtime.process_detection(frame(10, visible=False), 55.)
+        self.assertEqual(self.runtime.status()["mode"], "AUTO")
+        self.assertTrue(self.runtime.gateway.safety.recovering)
+        for i in range(11, 14):
+            self.runtime.process_detection(frame(i, hands=False), 55.)
+        self.assertEqual(self.runtime.status()["mode"], "AUTO")
+        self.assertFalse(self.runtime.gateway.safety.recovering)
+        self.assertEqual(self.runtime.presenter.gesture_event_id, original_event)
+        self.assertEqual(self.runtime.presenter.reason, "AUTO_RECALIBRATED_SAME_TRACK")
+
+    def test_passive_recovery_can_hold_during_existing_body_turn(self):
+        self.runtime.auto_recalibrate_brief_loss = True
+        self.assertTrue(self.runtime.action("gesture_on")["ok"])
+        for i in range(1, 10):
+            self.runtime.process_detection(frame(i), 55.)
+        wait_for(lambda: self.runtime.status()["mode"] == "AUTO")
+        self.runtime.controller._pending_turn = "TRACK_LEFT"
+        self.runtime.controller.planner.motion_pending = True
+        self.assertTrue(self.runtime._can_hold_brief_visual_loss(
+            frame(10, visible=False), 55., time.monotonic()))
     def test_disconnect_clears_gesture_standby(self):
         self.assertTrue(self.runtime.action("gesture_on")["ok"])
         self.runtime.set_camera_state(False, False)

@@ -51,6 +51,10 @@ class _SmoothHeadAiming:
     _pitch_gain_deg_per_px = 0.010
     _correction_limit_deg = 0.60
     _minimum_distance_gain = 0.35
+    # A small, verified head correction is preferable to saturating the neck.
+    # The body takes larger image errors; actual metric distance is unknown.
+    _adaptive_near_yaw_limit_deg = 1.5
+    _adaptive_far_yaw_limit_deg = 0.75
 
     @staticmethod
     def _validate_pitch_speed(speed_deg_s: float) -> None:
@@ -75,6 +79,28 @@ class _SmoothHeadAiming:
         self.responsive_follow = False
         self.distance_gain = 1.0
         self._distance_gain_at: Optional[float] = None
+        # Physical runtime explicitly gates aiming until the first AUTO
+        # session is armed. Standalone planner tests keep the opt-in default.
+        self._head_tracking_allowed = True
+        self._head_tracking_guard_frames = 0
+        self._head_tracking_guard_active = False
+
+    def set_actuation_gate(self, allowed: bool) -> None:
+        """Hold reported servo pose while SAFE or briefly after reacquisition."""
+        if not allowed:
+            self._head_tracking_allowed = False
+            self._head_tracking_guard_frames = 3
+            return
+        if not self._head_tracking_allowed:
+            self._head_tracking_guard_frames = 3
+        self._head_tracking_allowed = True
+
+    def _adaptive_yaw_limit(self) -> float:
+        if not self.distance_adaptive_head:
+            return 3.0
+        return max(self._adaptive_far_yaw_limit_deg,
+                   min(self._adaptive_near_yaw_limit_deg,
+                       self._adaptive_near_yaw_limit_deg * self.distance_gain))
 
     def _reference_pitch_target(self, target):
         if not self.relative_pitch_reference or self.pitch_min == self.pitch_max:
@@ -155,10 +181,19 @@ class _SmoothHeadAiming:
             return replace(plan, yaw_target_deg=previous_yaw,
                            pitch_target_deg=previous_pitch, head_pose_command=None)
 
+        if previous_at is None and previous_sent_yaw is None:
+            # First actual ESP32 feedback defines the servo origin of this
+            # session, not an assumed software zero from an earlier lock.
+            previous_yaw, previous_pitch = yaw_feedback, pitch_feedback
+            self.yaw_target_deg, self.pitch_target_deg = previous_yaw, previous_pitch
         virtual_x = round(target.error_x * VIRTUAL_FRAME_WIDTH / target.frame_width)
         virtual_y = round(target.error_y * VIRTUAL_FRAME_HEIGHT / target.frame_height)
+        # A face within ~8% of the image center is adequately centered.
+        # Tiny detector jitter must not wind the neck back and forth.
+        yaw_deadzone = (max(HEAD_X_DEADZONE_PX, round(VIRTUAL_FRAME_WIDTH * .08))
+                        if self.distance_adaptive_head else HEAD_X_DEADZONE_PX)
         yaw_delta = self._proportional_delta(
-            virtual_x, HEAD_X_DEADZONE_PX, self._yaw_gain_deg_per_px)
+            virtual_x, yaw_deadzone, self._yaw_gain_deg_per_px)
         # Scale AFTER limiting the delta. Otherwise a large faraway pixel
         # error hits the same 0.6-degree cap and defeats distance damping.
         yaw_delta *= self.distance_gain if self.distance_adaptive_head else 1.0
@@ -168,10 +203,17 @@ class _SmoothHeadAiming:
         # Use a smaller neck envelope when the person is far away. At the
         # edge, transfer the remaining angular bearing to the body instead
         # of repeatedly pushing the camera out of frame.
-        yaw_soft_limit = (max(1.1, 3.0 * self.distance_gain)
-                          if self.distance_adaptive_head else 3.0)
-        desired_yaw = max(-yaw_soft_limit, min(yaw_soft_limit,
-            yaw_feedback + yaw_delta * CAMERA_X_TO_ROBOT_YAW_DIRECTION))
+        yaw_soft_limit = self._adaptive_yaw_limit()
+        yaw_requested = yaw_delta * CAMERA_X_TO_ROBOT_YAW_DIRECTION
+        if (abs(yaw_feedback) > yaw_soft_limit and
+                yaw_requested * yaw_feedback >= 0):
+            # A prior lock may have left the actual neck at +/-3 deg.
+            # Never jump back toward 0 on a centered face, or push farther
+            # outward. A visible edge can instead request a body turn.
+            desired_yaw = yaw_feedback
+        else:
+            desired_yaw = max(-yaw_soft_limit, min(yaw_soft_limit,
+                yaw_feedback + yaw_requested))
         # If the image is mirrored for display, *only* yaw sign is swapped
         # before _filter_aim, as in the previously tested implementation.
         if self.relative_pitch_reference and self.pitch_reference_y is not None:
@@ -185,6 +227,19 @@ class _SmoothHeadAiming:
             desired_pitch = (pitch_feedback + pitch_delta * HEAD_PITCH_IMAGE_DIRECTION *
                              (-1.0 if self.invert_vertical else 1.0))
         desired_pitch = max(self.pitch_min, min(self.pitch_max, desired_pitch))
+        self._head_tracking_guard_active = (
+            not self._head_tracking_allowed or self._head_tracking_guard_frames > 0)
+        if self._head_tracking_guard_active:
+            # While SAFE, do not prepare commands that will jump on ARM.
+            # After AUTO resumes, accept three full images before moving.
+            if self._head_tracking_allowed:
+                self._head_tracking_guard_frames -= 1
+            self.yaw_target_deg, self.pitch_target_deg = yaw_feedback, pitch_feedback
+            self.last_pose_send_at = previous_at
+            self.last_sent_yaw, self.last_sent_pitch = previous_sent_yaw, previous_sent_pitch
+            return replace(plan, yaw_target_deg=yaw_feedback,
+                           pitch_target_deg=pitch_feedback,
+                           head_pose_command=None)
         elapsed = (0.12 if previous_at is None
                    else max(0.0, now - previous_at))
         if previous_at is not None and elapsed + 1e-9 < self._send_interval_s:
@@ -311,6 +366,16 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
             yaw_feedback=kwargs.get("head_yaw_feedback_deg"),
             pitch_feedback=pitch_feedback,
             feedback_fresh=kwargs.get("head_feedback_fresh", False))
+        if self._head_tracking_guard_active:
+            self.motion_pending = False
+            self.body_candidate = None
+            self.body_candidate_count = 0
+            self._turn_proposals = 0
+            self._proposal_direction = None
+            return replace(plan, yaw_target_deg=self.yaw_target_deg,
+                           pitch_target_deg=self.pitch_target_deg,
+                           body_command=None, suggested_body_turn=None,
+                           reason="TRACKING_STABILIZING")
         if self.reverse_body_turn_direction:
             # Reverse ONLY body pivot commands. Camera image and head-yaw
             # calibration are independent of the walking mechanism's sign.
@@ -329,8 +394,7 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
             # its calibrated boundary and the face approaches the edge do
             # we request a feedback-gated body turn while vision is still valid.
             feedback_yaw = kwargs.get("head_yaw_feedback_deg")
-            yaw_limit = (max(1.1, 3.0 * self.distance_gain)
-                         if self.distance_adaptive_head else 3.0)
+            yaw_limit = self._adaptive_yaw_limit()
             head_near_limit = (abs(self.yaw_target_deg) >= .85 * yaw_limit
                                and kwargs.get("head_feedback_fresh", False)
                                and feedback_yaw is not None
@@ -663,8 +727,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                                                   detection.frame_height)):
             return None
         previous = getattr(self, "_last_cycle", None)
-        yaw_limit = (max(1.1, 3.0 * self.controller.planner.distance_gain)
-                     if self.distance_adaptive_head else 3.0)
+        yaw_limit = self.controller.planner._adaptive_yaw_limit()
         if (previous is None or not previous.target_valid
                 or previous.plan.suggested_body_turn not in ("TRACK_LEFT", "TRACK_RIGHT")
                 or abs(previous.plan.yaw_target_deg) < .85 * yaw_limit):
@@ -706,9 +769,10 @@ class LockedRealRuntime(LockedSimulationRuntime):
         if previous is None or not previous.target_valid:
             return False
         telemetry = self.controller.telemetry.snapshot(now=now)
-        return (telemetry.head_fresh and telemetry.body_idle_confirmed and
-                self.controller._pending_turn is None and
-                not self.controller.planner.motion_pending)
+        # A moving leg turn is NOT a reason to tear down the tracking lease:
+        # no additional head/body command is permitted during recovery.
+        # This passive hold works even while the previous turn finishes.
+        return telemetry.head_fresh and not self.gateway.status().transport_fault
 
     def publish_preview(self, frame, detection) -> None:
         """Render a target-to-center vector, action zone and last seen bearing."""
@@ -785,9 +849,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
             elif follow is not None and follow.plan.reason == "WAIT_ESP32_IDLE_CONFIRMATION":
                 zone = "BODY TURN IN PROGRESS"
             elif (abs(dx) >= turn_threshold_px and follow is not None
-                  and abs(follow.plan.yaw_target_deg) >= .85 * (
-                      max(1.1, 3.0 * self.controller.planner.distance_gain)
-                      if self.distance_adaptive_head else 3.0)):
+                  and abs(follow.plan.yaw_target_deg) >= .85 *
+                      self.controller.planner._adaptive_yaw_limit()):
                 zone = "BODY TURN PREPARING"
             elif abs(dx) < width*.035 and abs(dy) < height*.06:
                 zone = "CENTERED"
@@ -1067,6 +1130,15 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self._search_direction = proposal if proposal else "HOLD"
                 self._search_started_at = now
                 self._search_result = "SEARCHING" if proposal else "HOLDING_FOR_TARGET"
+            # Crucial: only AUTO with a proven TRACKING lock may aim.
+            # On the three recovering frames the head stays stationary even
+            # though the detector already reports a recognizable face.
+            aiming_allowed = (self.gateway.status().safety.mode == Mode.AUTO
+                and self.gateway.firmware_safety_status() == "ARMED"
+                and self.presenter.state == "TRACKING"
+                and not self.gateway.safety.recovering
+                and not was_searching)
+            self.controller.planner.set_actuation_gate(aiming_allowed)
             super().process_detection(detection, rtt_ms)
             if self.gateway.safety.recovering:
                 if self.presenter.state not in ("TEMPORARILY_LOST", "TRACKING"):
