@@ -178,7 +178,7 @@ class V883PersonDualLoop:
         )
         # BBox can be cropped at top/bottom, or nearly fill the frame.
         # An apparent head point then becomes unreliable for Pitch control.
-        pitch_ok = (
+        pitch_ok = target.aim_from_pose or (
             target.box_height < target.frame_height * 0.90
             and target.box_height > 0
         )
