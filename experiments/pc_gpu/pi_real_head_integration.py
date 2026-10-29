@@ -208,6 +208,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                                        transient_recovery_s=0.9)
         self.gesture_control_enabled = False
         self._gesture_handled_event = 0
+        self._gesture_pending_event = 0
+        self._gesture_pending_since = 0.0
         self.invert_horizontal = invert_horizontal
         self._preview_jpeg: Optional[bytes] = None
         self._preview_resolution: Optional[str] = None
@@ -383,12 +385,20 @@ class LockedRealRuntime(LockedSimulationRuntime):
         with self._guard:
             super().process_detection(detection, rtt_ms)
             current_event = self.presenter.gesture_event_id
-            if current_event != self._gesture_handled_event:
-                self._gesture_handled_event = current_event
-                # Only authenticated opt-in enables gesture-initiated ARM.
-                # One gesture event gets one ARM attempt. Reappearance alone
-                # or repeated held hands cannot cause spontaneous re-ARM.
-                if self.gesture_control_enabled and self.status()["auto_ready"]:
+            if current_event > self._gesture_handled_event and current_event != self._gesture_pending_event:
+                self._gesture_pending_event = current_event
+                self._gesture_pending_since = time.monotonic()
+            if self._gesture_pending_event:
+                ready = self.status()
+                if (not self.gesture_control_enabled or
+                        ready["lock_state"] != "TRACKING" or
+                        time.monotonic() - self._gesture_pending_since > 3.0):
+                    self._gesture_handled_event = self._gesture_pending_event
+                    self._gesture_pending_event = 0
+                elif ready["auto_ready"]:
+                    event = self._gesture_pending_event
+                    self._gesture_pending_event = 0
+                    self._gesture_handled_event = event
                     result = self.action("auto")
                     self._last_event = ("GESTURE_AUTO_ARM_REQUESTED" if result.get("ok")
                                         else "GESTURE_ARM_BLOCKED_" + str(result.get("error")))
@@ -401,14 +411,17 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.gesture_control_enabled = True
                 self.presenter.clear("WAIT_BOTH_HANDS_OVER_HEAD")
                 self._gesture_handled_event = self.presenter.gesture_event_id
+                self._gesture_pending_event = 0
                 return {"ok": True, "gesture_control_enabled": True}
             if action == "gesture_off":
                 self.gesture_control_enabled = False
+                self._gesture_pending_event = 0
                 super().action("stop")
                 self.presenter.clear("GESTURE_STANDBY_DISABLED")
                 return {"ok": True, "gesture_control_enabled": False}
             if action in ("stop", "estop"):
                 self.gesture_control_enabled = False
+                self._gesture_pending_event = 0
             if action == "manual":
                 return {"ok": False, "error": "BODY_MOVEMENT_NOT_APPROVED"}
             if action in {"auto", "reset"} and not self.head_enabled:
