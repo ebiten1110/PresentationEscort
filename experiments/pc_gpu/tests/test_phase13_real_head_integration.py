@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from detection_protocol import DetectionResult
 from person_target_adapter import PersonTarget, detection_to_person_target
-from pi_real_head_integration import HeadOnlyPlanner, HeadOnlySerialSink, LockedRealRuntime
+from pi_real_head_integration import (HeadBodyTurnPlanner, HeadOnlyPlanner,
+                                      HeadOnlySerialSink, LockedRealRuntime)
 
 
 class FakeSerial:
@@ -160,6 +161,48 @@ class GuardTests(unittest.TestCase):
     def test_reject_invalid_pitch_speed(self):
         with self.assertRaises(ValueError):
             HeadOnlyPlanner(pitch_speed_deg_s=0.2)
+
+    def test_extreme_visible_offset_can_request_early_body_turn(self):
+        planner = HeadBodyTurnPlanner(
+            pitch_min=-2., pitch_max=2., stable_frames=2,
+            head_speed_deg_s=2., pitch_speed_deg_s=1.5)
+        target = self._vertical_target(error_y=0, error_x=230)
+        measured_yaw = 0.
+        proposals = []
+        for i in range(24):
+            plan = planner.step(
+                target, now=1.+i*.12, head_yaw_feedback_deg=measured_yaw,
+                head_pitch_feedback_deg=0.,
+                head_feedback_fresh=True, body_idle=True)
+            measured_yaw = plan.yaw_target_deg
+            if plan.body_command:
+                proposals.append((plan.body_command, measured_yaw))
+                break
+        self.assertTrue(proposals, "extreme side movement should allow a bounded turn")
+        self.assertLess(abs(proposals[0][1]), 2.5)
+
+    def test_esp32_pitch_pwm_diagnostic_is_kept_per_channel(self):
+        self.fake.read_available = lambda **kwargs: (
+            b"[ServoDiag] PWM ch=3 angle=-1.5 duty=301 i2c=ACK\n"
+            b"[ServoDiag] PWM ch=2 angle=0.8 duty=305 i2c=ACK\n")
+        sink = HeadOnlySerialSink("fake", head_enabled=True,
+                                  pitch_min=-2., pitch_max=2.)
+        sink.read_available()
+        self.assertIn("ch=3", sink.last_head_pwm[3])
+        self.assertIn("ch=2", sink.last_head_pwm[2])
+        self.assertIn("ch=2", sink.last_servo_diagnostic)
+        sink.close()
+
+    def test_camera_stage_timing_is_available_in_status(self):
+        runtime = LockedRealRuntime("fake", head_enabled=False)
+        self.addCleanup(runtime.close)
+        runtime.set_capture_diagnostics({"requested_mjpeg": True,
+                                         "fourcc": "MJPG", "reported_fps": 30.})
+        runtime.set_capture_timing({"capture_ms": 40., "encode_ms": 6.,
+                                    "remote_infer_roundtrip_ms": 50.})
+        state = runtime.status()
+        self.assertEqual(state["camera_capture_mode"]["fourcc"], "MJPG")
+        self.assertEqual(state["camera_stage_timing_ms"]["capture_ms"], 40.)
 
 
 if __name__ == "__main__":

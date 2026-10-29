@@ -152,9 +152,15 @@
     try {
       const status = await call("/api/status");
       lastStatus = status;
+      const cameraTiming = status.camera_stage_timing_ms;
+      const captureMode = status.camera_capture_mode;
       byId("camera-resolution").textContent = (status.camera_resolution || "映像待機") +
         (status.camera_effective_fps == null ? "" : " · 実測 " + status.camera_effective_fps + " FPS") +
-        (status.inference_ms == null ? "" : " · GPU推論 " + status.inference_ms + " ms");
+        (status.inference_ms == null ? "" : " · GPU推論 " + status.inference_ms + " ms") +
+        (captureMode && captureMode.fourcc ? " · カメラ形式 " + captureMode.fourcc : "") +
+        (cameraTiming && cameraTiming.capture_ms != null
+          ? " · 撮影 " + cameraTiming.capture_ms + " ms / 転送+推論 " +
+            fmt(cameraTiming.remote_infer_roundtrip_ms) + " ms" : "");
       currentMode = status.mode;
       byId("mode").textContent = status.mode;
       const led = status.led_indicated_color || (
@@ -212,9 +218,13 @@
       byId("preview-status").textContent = status.preview_available === false
         ? "Piから未生成" : status.preview_age_ms == null
           ? "取得状態不明" : "画像生成から " + status.preview_age_ms + " ms";
-      byId("esp32-servo-diagnostic").textContent =
-        status.uart_last_servo_diagnostic ||
-        "未報告（診断対応ESP32ファーム未導入／首PWM未出力の可能性）";
+      const pwm = status.uart_head_pwm;
+      byId("esp32-servo-diagnostic").textContent = pwm && (pwm.yaw_ch2 || pwm.pitch_ch3)
+        ? "左右CH2: " + fmt(pwm.yaw_ch2) + " / 上下CH3: " + fmt(pwm.pitch_ch3) +
+          (pwm.pitch_ch3 == null && status.pitch_tracking_enabled
+            ? " / 上下のPWM指令を未確認（配線・制御条件を確認）" : "")
+        : status.uart_last_servo_diagnostic ||
+          "未報告（ESP32診断ファーム未導入／首PWM未出力の可能性）";
       byId("esp32-walking-feedback").textContent = walking
         ? fmt(walking.state) + " / Busy " + fmt(walking.busy) +
           " / IDLE確定 " + fmt(walking.idle_confirmed)
@@ -235,6 +245,11 @@
         status.simulation !== false ? "仮想ESP32" :
         status.mode !== "AUTO" ? "AUTOではありません" :
         !head || !head.fresh ? "ESP32の首角度応答を取得できていません" :
+        status.pitch_tracking_enabled && follow && follow.pitch_at_limit
+          ? "上下角度が許可範囲の端です。映像中央に届かない場合、実機での可動範囲校正が必要です" :
+        status.pitch_tracking_enabled && pwm && pwm.pitch_ch3 &&
+          head.pitch_deg != null && Math.abs(head.pitch_deg) >= 0.5
+          ? "上下CH3へPWM命令あり。実際に動かない場合は上下サーボの電源・接続・機構を確認" :
         head.yaw_deg != null && Math.abs(head.yaw_deg) >= 0.5
           ? "ESP32内部角度は更新済み。実サーボの電源・配線・PCA9685出力を確認"
           : follow && !follow.head_sent

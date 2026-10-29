@@ -256,8 +256,21 @@ class HeadBodyTurnPlanner(_SmoothHeadAiming, V883PersonDualLoop):
                                and feedback_yaw is not None
                                and abs(feedback_yaw) >= 2.2
                                and self.yaw_target_deg * feedback_yaw > 0)
+            # An exceptionally large, still-visible side displacement can
+            # escape the frame before the neck reaches +/-2.5 degrees.
+            # Permit a body turn slightly earlier only with corroborating
+            # fresh measured MCU angle, consistent turn direction, stable
+            # frame votes, and all existing gateway/firmware motion gates.
+            extreme_visible_edge = (
+                normalized_error >= max(.30, self.edge_fraction * 2.)
+                and abs(self.yaw_target_deg) >= 1.5
+                and kwargs.get("head_feedback_fresh", False)
+                and feedback_yaw is not None
+                and abs(feedback_yaw) >= 1.2
+                and self.yaw_target_deg * feedback_yaw > 0
+            )
             if (normalized_error < self.edge_fraction or
-                    not head_near_limit or not settled):
+                    not (head_near_limit or extreme_visible_edge) or not settled):
                 reason = "BODY_WAIT_TARGET_EDGE_OR_SETTLING"
                 body_command = None
                 self._turn_proposals = 0
@@ -302,6 +315,7 @@ class HeadOnlySerialSink:
         self._serial_partial = ""
         self.last_safety_event: Optional[str] = None
         self.last_servo_diagnostic: Optional[str] = None
+        self.last_head_pwm: dict[int, str] = {}
 
     def send(self, command: str) -> None:
         cmd = command.strip().upper()
@@ -355,6 +369,9 @@ class HeadOnlySerialSink:
                 # from presenter detection or an old ARM-success message.
                 if line.startswith("[ServoDiag]"):
                     self.last_servo_diagnostic = line[:180]
+                    pwm = re.match(r"^\[ServoDiag\] PWM ch=(2|3)\s", line)
+                    if pwm:
+                        self.last_head_pwm[int(pwm[1])] = line[:180]
                 if line.startswith("[Safety] FAULT=") or line in (
                     "[Safety] ARM_REJECTED",
                     "[Safety] RESET_REJECTED",
@@ -472,6 +489,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
         self._preview_jpeg: Optional[bytes] = None
         self._preview_at: Optional[float] = None
         self._preview_resolution: Optional[str] = None
+        self._capture_diagnostics: dict = {}
+        self._capture_timing: dict = {}
         self._diagnostics = DiagnosticCapture() if capture_diagnostics else None
         self._last_detection_at: Optional[float] = None
         self._camera_interval_s: Optional[float] = None
@@ -684,6 +703,14 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self._search_direction = None
                 self._search_result = "LINK_LOST"
 
+    def set_capture_diagnostics(self, info: dict) -> None:
+        with self._guard:
+            self._capture_diagnostics = dict(info)
+
+    def set_capture_timing(self, timing: dict) -> None:
+        with self._guard:
+            self._capture_timing = dict(timing)
+
     def _update_status_led(self) -> None:
         """Synchronize the Pi gesture-wait LED lease; firmware owns WHITE.
 
@@ -774,6 +801,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 if follow is not None else None
             )
             status["camera_resolution"] = self._preview_resolution
+            status["camera_capture_mode"] = dict(self._capture_diagnostics)
+            status["camera_stage_timing_ms"] = dict(self._capture_timing)
             status["preview_available"] = self._preview_jpeg is not None
             status["preview_age_ms"] = (
                 round((time.monotonic() - self._preview_at) * 1000)
@@ -806,6 +835,10 @@ class LockedRealRuntime(LockedSimulationRuntime):
             status["uart_poll_error"] = self._uart_poll_error
             status["uart_last_safety_event"] = self.sink.last_safety_event
             status["uart_last_servo_diagnostic"] = self.sink.last_servo_diagnostic
+            status["uart_head_pwm"] = {
+                "yaw_ch2": self.sink.last_head_pwm.get(2),
+                "pitch_ch3": self.sink.last_head_pwm.get(3),
+            }
             status["arm_error"] = self._last_arm_error
             status["fault_cause"] = (
                 "UART_POLL_" + self._uart_poll_error if self._uart_poll_error else
@@ -961,6 +994,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 "search_state", "head_speed_limit_deg_s", "pitch_tracking_enabled",
                 "head_feedback_error", "head_pitch_approved_range",
                 "pitch_speed_limit_deg_s", "vertical_direction",
+                "uart_head_pwm", "uart_last_servo_diagnostic",
+                "camera_capture_mode", "camera_stage_timing_ms",
             )
             snapshot = {key: state.get(key) for key in public_keys}
         return self._diagnostics.export(status=snapshot)
@@ -1036,6 +1071,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--camera-height", type=int, default=480)
     ap.add_argument("--camera-fps", type=int, default=30,
                     help="Requested camera capture FPS (5..60); actual rate may be lower")
+    ap.add_argument("--camera-mjpeg", action="store_true",
+                    help="Try UVC MJPEG transport; measure actual FourCC/FPS in diagnostics")
     ap.add_argument("--capture-diagnostics", action="store_true",
                     help="Opt in to bounded RAM image+decision capture and authenticated ZIP download")
     ap.add_argument("--jpeg-quality", type=int, default=80)
@@ -1145,6 +1182,7 @@ def main(argv: Optional[list[str]] = None) -> None:
                 camera_height=args.camera_height,
                 camera_fps=args.camera_fps,
                 jpeg_quality=args.jpeg_quality,
+                camera_mjpeg=args.camera_mjpeg,
             )
             worker.start()
         token = secrets.token_urlsafe(32)

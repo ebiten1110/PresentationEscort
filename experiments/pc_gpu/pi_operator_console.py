@@ -162,6 +162,7 @@ class CameraInferenceWorker(threading.Thread):
         camera_height: int = 480,
         camera_fps: int = 30,
         jpeg_quality: int = 80,
+        camera_mjpeg: bool = False,
     ) -> None:
         super().__init__(name="camera-inference-dry-run", daemon=True)
         self.runtime = runtime
@@ -179,6 +180,7 @@ class CameraInferenceWorker(threading.Thread):
         self.camera_height = camera_height
         self.camera_fps = camera_fps
         self.jpeg_quality = jpeg_quality
+        self.camera_mjpeg = camera_mjpeg
         self.done = threading.Event()
 
     def close(self) -> None:
@@ -188,6 +190,10 @@ class CameraInferenceWorker(threading.Thread):
         import cv2  # lazy dependency: UI can run on PC without OpenCV.
         while not self.done.is_set():
             cam = cv2.VideoCapture(self.camera_index)
+            if self.camera_mjpeg:
+                # Optional USB UVC MJPEG negotiation, never assumed to work.
+                # Some cameras deliver substantially fewer FPS in YUYV.
+                cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
             cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
             # This is a *request*, not an achievable-FPS guarantee. The
@@ -195,6 +201,14 @@ class CameraInferenceWorker(threading.Thread):
             # roundtrip jointly determine the actual frame rate.
             cam.set(cv2.CAP_PROP_FPS, self.camera_fps)
             cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            report_cap = getattr(self.runtime, "set_capture_diagnostics", None)
+            if callable(report_cap) and cam.isOpened():
+                actual_fourcc = int(cam.get(cv2.CAP_PROP_FOURCC))
+                fourcc = "".join(chr((actual_fourcc >> (8 * n)) & 255)
+                                 for n in range(4)).strip("\x00")
+                report_cap({"requested_mjpeg": self.camera_mjpeg,
+                            "fourcc": fourcc,
+                            "reported_fps": cam.get(cv2.CAP_PROP_FPS)})
             self.runtime.set_camera_state(cam.isOpened(), False)
             try:
                 if not cam.isOpened():
@@ -206,14 +220,24 @@ class CameraInferenceWorker(threading.Thread):
                     while not self.done.is_set():
                         started = time.monotonic()
                         ok, frame = cam.read()
+                        captured_at = time.monotonic()
                         if not ok:
                             raise RuntimeError("camera frame unavailable")
                         ok, compressed = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+                        encoded_at = time.monotonic()
                         if not ok:
                             raise RuntimeError("JPEG encode failed")
                         send_message(sock, compressed.tobytes())
                         result = DetectionResult.from_dict(recv_json(sock))
-                        rtt_ms = (time.monotonic() - started) * 1000.0
+                        returned_at = time.monotonic()
+                        rtt_ms = (returned_at - started) * 1000.0
+                        report_timing = getattr(self.runtime, "set_capture_timing", None)
+                        if callable(report_timing):
+                            report_timing({
+                                "capture_ms": round((captured_at - started) * 1000, 1),
+                                "encode_ms": round((encoded_at - captured_at) * 1000, 1),
+                                "remote_infer_roundtrip_ms": round((returned_at - encoded_at) * 1000, 1),
+                            })
                         self.runtime.process_detection(result, rtt_ms)
                         publish = getattr(self.runtime, "publish_preview", None)
                         if callable(publish):

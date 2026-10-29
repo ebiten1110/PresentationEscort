@@ -37,3 +37,40 @@
 - 見失い方向が本当に画面端へ抜けた直後でない限り、方向予測だけで本体を旋回しない。
 - 同一人物の確認ができない場合、別人を勝手に追跡しない。緊急停止や通信断からの再ARMは常に明示操作が必要。
 - 実機の上下許可範囲拡張、本体旋回、自動原点補正は別途物理校正が必要。今回のコード変更はそれらの許可を追加しない。
+
+## 15:31 JST の最新診断ZIP (3) を反映した一括改善
+
+- 600フレームのうち人物を認識したのは590、TRACKINGは339。ロック解除／待機が続いた主因は、人物検出の失敗ではなく **両手挙げ待ち228フレーム**。これはSTOP後などの再選択状態を含み、検出器の正解率を表す数字ではない。
+- **上下は566/600フレームで±2°の許可端**。対象の顔は画面中央より約117px上だったが、許可域のためそれ以上動けない。ESP32内部値 -2° だけではサーボ軸の物理移動は証明できない。
+- **本体旋回送信0回**。診断時の本体旋回オプションが無効。新たに大きな左右ずれが続く際の本体旋回判断を早めたが、従来の角度フィードバック・連続フレーム・ESP32 IDLE・ARM・ゲート条件は必要。
+- GPU平均約36msでもカメラ実測約5.8FPS。USBカメラへ `--camera-mjpeg` を要求するオプションを追加し、実際のFourCC、取得・圧縮・通信/推論時間を管理画面に表示。改善するかはカメラの対応形式次第。
+- ESP32の直近 `[ServoDiag] PWM ch=2`（Yaw）と `ch=3`（Pitch）を別々に保存。`ch=3 ... i2c=ACK` でも物理駆動は未証明。**CH3に値が出て変化するのに実物が動かない場合は、サーボ給電・PWM線・PCA9685 CH3・機械的噛み合わせを確認**。ログにCH3が全くないならESP32のファーム更新状況／上下指令が来ているかを確認。
+
+### 実機統合テスト（既に確認済みの範囲内で行う）
+
+既存のPC側GPUサーバー・SSHトンネルを起動しておく。Pi側で更新し、次を**1回の起動**にまとめる。既存のESP32ファームが前述の `[ServoDiag]` に対応していれば再書込みは不要。
+
+```bash
+cd ~/PresentationEscort-demo
+git pull --ff-only origin feature/pc-gpu-follow-2026-10-28
+python3 experiments/pc_gpu/pi_real_head_integration.py \
+  --serial-port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0 \
+  --servo-power-on --pc-host 127.0.0.1 \
+  --enable-head-test --enable-body-turns --body-turn-calibrated \
+  --pitch-calibrated --pitch-min-deg -2 --pitch-max-deg 2 \
+  --head-speed-deg-per-second 2.0 \
+  --pitch-speed-deg-per-second 1.5 \
+  --turn-stable-frames 3 --turn-settle-seconds 0.7 \
+  --turn-edge-fraction 0.15 \
+  --camera-width 640 --camera-height 480 --camera-fps 30 \
+  --camera-mjpeg --bench-secured --neutral-calibrated \
+  --physical-cutoff-tested --capture-diagnostics
+```
+
+両手挙げで対象をロックしたら、**上下→大きく左右→画面外→復帰**を連続実施する。画面のPitch目標とCH3 PWM、本体送信回数、実測FPS、復帰時のロック理由を同時に見る。終えたらSTOPして診断ZIPを保存する。横旋回方向が逆ならその場で停止し、無断で`--reverse-*`を付けない。**再ARMは自動化せず、別人への乗換えも行わない。**
+
+### 次の精度改善優先順位
+
+1. 上下CH3が本当に動くかを見分けて、物理校正できた場合にのみ±2°以上の追従範囲を拡張。ソフトだけで不明な可動域を増やさない。
+2. 5.8FPSの内訳を新しいタイミング欄で確認。撮影が支配的ならMJPEG・露光調整、通信が支配的なら画像サイズ・エンコード・ストリーム構成を変更。
+3. 同一人物の追跡継続性は単なる検出率と区別して改善。**両手挙げは追従対象の登録でありサーボ物理原点のキャリブレーションではない**。一時ロスト後の本人照合、顔/肩の安定化、再開ジェスチャーの表示を改善するが、ESTOP/通信異常からの自動再ARMはしない。
