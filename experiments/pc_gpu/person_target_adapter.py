@@ -24,6 +24,7 @@ class PersonTarget:
     frame_width: int
     frame_height: int
     confidence: float
+    aim_from_pose: bool = False
 
     def residual_bearing_deg(self, horizontal_fov_deg: float = 60.0,
                              image_to_yaw_sign: float = -1.0) -> float:
@@ -89,4 +90,5 @@ def detection_to_person_target(
         frame_width=fw,
         frame_height=fh,
         confidence=float(detection.confidence),
+        aim_from_pose=detection.aim_source in ("face", "shoulders"),
     )
