@@ -12,7 +12,7 @@ Alternative: bash scripts/start_pi_follow.sh runs the Pi side alone when PC YOLO
 
 ## Guards and behavior
 
-- The Pi start script requires an active obnizAP2 Wi-Fi connection; it never switches Wi-Fi during an SSH-driven motor session. Initial setup uses nmcli --ask, and NetworkManager retains credentials locally.
-- The script refuses to open the ESP32 serial port when vcgencmd get_throttled reports *current* undervoltage or throttling; historical flags emit a warning instead. It checks the stable by-id serial symlink before starting.
+- The Pi start script warns if obnizAP2 is not active but does not block startup or forcibly switch Wi-Fi during an SSH-driven session. Initial setup uses nmcli --ask, and NetworkManager retains credentials locally.
+- The script prints a warning for *current* or historical undervoltage/throttling but does not block startup for voltage flags, as requested by the operator. This does not remove the ESP32 firmware ESTOP/watchdog or UART fault latching. Pi power from PC USB remains unreliable. A missing ESP32 by-id serial device is a hard dependency and still prevents startup.
 - The previous externally calibrated yaw/pitch/body options, distance-adaptive tracking, preview decimation and diagnostic capture are preserved. Firmware is unchanged. Physical cutoff remains necessary; STOP/ESTOP alone is not physical power removal.
 - The Windows PC and Pi must reach each other over the AP. If the AP enables client isolation, SSH will not connect even with matching SSIDs. Use -PiHost with the Pi's current IPv4 when .local does not resolve.

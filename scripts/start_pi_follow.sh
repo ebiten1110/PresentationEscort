@@ -45,31 +45,33 @@ case "$MODE" in
   *) echo "Unknown argument: $MODE" >&2; exit 2 ;;
 esac
 
-if ! command -v nmcli >/dev/null 2>&1; then
-  echo "Cannot verify Wi-Fi; nmcli missing. No motors started." >&2; exit 3
+# Neither Wi-Fi SSID nor historical voltage warnings block startup.
+# Firmware ESTOP, watchdog, and actuator gates remain unchanged.
+if command -v nmcli >/dev/null 2>&1; then
+  if ! nmcli -t -f ACTIVE,SSID device wifi list --rescan no | grep -Fxq "yes:$SSID"; then
+    echo "Warning: not on $SSID; continuing on the existing network." >&2
+  fi
+else
+  echo "Warning: nmcli unavailable; cannot display current Wi-Fi." >&2
 fi
-if ! nmcli -t -f ACTIVE,SSID device wifi list --rescan no | grep -Fxq "yes:$SSID"; then
-  echo "Pi is not connected to $SSID." >&2
-  echo "Run: bash scripts/start_pi_follow.sh --setup-wifi (before starting SSH)." >&2
-  exit 3
+if command -v vcgencmd >/dev/null 2>&1; then
+  if POWER_STATE="$(vcgencmd get_throttled 2>/dev/null)" &&
+      [[ "$POWER_STATE" =~ ^throttled=0x[0-9a-fA-F]+$ ]]; then
+    POWER_HEX="$(printf '%s' "$POWER_STATE" | cut -d= -f2)"
+    if (( POWER_HEX & 0x5 )); then
+      echo "Warning: ACTIVE Pi undervoltage/throttling ($POWER_STATE)." >&2
+      echo "Use a Pi-rated power supply; UART may fail. Continuing as requested." >&2
+    fi
+    if (( POWER_HEX & 0x50000 )); then
+      echo "Warning: historical Pi undervoltage/throttling ($POWER_STATE)." >&2
+    fi
+  else
+    echo "Warning: failed to read Pi voltage diagnostics; continuing." >&2
+  fi
+else
+  echo "Warning: vcgencmd unavailable; continuing without voltage diagnostics." >&2
 fi
-if ! command -v vcgencmd >/dev/null 2>&1; then
-  echo "Pi voltage check unavailable. No motors started." >&2; exit 3
-fi
-POWER_STATE="$(vcgencmd get_throttled)"
-case "$POWER_STATE" in
-  throttled=0x*) ;;
-  *) echo "Unknown voltage report: $POWER_STATE. No motors started." >&2; exit 3 ;;
-esac
-POWER_HEX="$(printf '%s' "$POWER_STATE" | cut -d= -f2)"
-if (( POWER_HEX & 0x5 )); then
-  echo "Active Pi undervoltage/throttling: $POWER_STATE" >&2
-  echo "Use a dedicated Pi-rated supply, not the PC USB port." >&2
-  exit 3
-fi
-if (( POWER_HEX & 0x50000 )); then
-  echo "Warning: historical undervoltage/throttling: $POWER_STATE" >&2
-fi
+
 if [[ ! -e "$SERIAL_PORT" ]]; then
   echo "ESP32 serial device missing: $SERIAL_PORT" >&2
   echo "Check: ls -l /dev/serial/by-id/" >&2

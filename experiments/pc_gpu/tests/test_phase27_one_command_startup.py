@@ -14,10 +14,17 @@ class StartupScriptTests(unittest.TestCase):
         self.assertIn("nmcli --ask --wait 30 device wifi connect", source)
         self.assertIn("connection.autoconnect yes", source)
 
-    def test_low_voltage_blocks_before_serial_open(self):
+    def test_wifi_and_voltage_warn_without_blocking_startup(self):
         source = PI.read_text(encoding="utf-8")
         self.assertIn("vcgencmd get_throttled", source)
         self.assertIn("POWER_HEX & 0x5", source)
+        self.assertIn("Warning: ACTIVE Pi undervoltage/throttling", source)
+        self.assertIn("continuing on the existing network", source)
+        optional_checks = source[
+            source.index("# Neither Wi-Fi SSID"):
+            source.index('if [[ ! -e "$SERIAL_PORT" ]]')
+        ]
+        self.assertNotIn("exit 3", optional_checks)
         self.assertLess(source.index("POWER_HEX & 0x5"),
                         source.index('exec "$PYTHON_BIN"'))
 
