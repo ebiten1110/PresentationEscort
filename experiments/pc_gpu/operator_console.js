@@ -13,7 +13,7 @@
   let previewBusy = false;
   let previewObjectUrl = null;
   const byId = id => document.getElementById(id);
-  const controls = ["auto", "manual", "stop", "left", "right", "estop", "reset"];
+  const controls = ["auto", "manual", "stop", "left", "right", "estop", "reset", "gesture-on", "gesture-off"];
   const fmt = val => (val === null || val === undefined) ? "—" : String(val);
 
   async function call(path, obj) {
@@ -44,7 +44,7 @@
       const res = await call("/api/action", {action});
       pendingAuto = action === "auto" && !!res.pending;
       if (action === "auto" && res.ok) autoSession = true;
-      if (action === "stop" || action === "estop" || action === "reset") {
+      if (action === "stop" || action === "estop" || action === "reset" || action === "gesture-off") {
         pendingAuto = false;
         autoSession = false;
       }
@@ -123,7 +123,8 @@
     for (const candidate of candidates) {
       const button = document.createElement("button");
       button.textContent =
-        (candidate.index === status.selected_index ? "● 追従対象 " : "候補 ") +
+        (candidate.index === status.selected_index ? "● 追従対象 " :
+        candidate.gesturing ? "🙌 ジェスチャー " : "候補 ") +
         (candidate.index + 1) +
         "（左右 " + candidate.x_percent + "% / 上下 " +
         candidate.y_percent + "% / 信頼度 " +
@@ -218,6 +219,13 @@
       }
       byId("auto").disabled = !status.auto_ready ||
         status.mode !== "SAFE" || !!status.fw_arm_pending || pendingAuto;
+      const gestureEnabled = status.gesture_control_enabled === true;
+      byId("gesture-on").disabled = simulated || status.mode !== "SAFE" || gestureEnabled;
+      byId("gesture-off").disabled = simulated || !gestureEnabled;
+      byId("gesture-on").textContent = gestureEnabled ? "ジェスチャー待機中" : "ジェスチャー追従を待機";
+      byId("gesture-help").textContent = gestureEnabled
+        ? "待機中：両手を頭より上に挙げて保持。認識後、対象が緑になり、ESP32へのAUTO切替を試みます。"
+        : "待機を有効にし、両手を頭より上に挙げて保持。見失ったら停止し、再度ジェスチャーで開始。";
       byId("manual").disabled = status.mode === "ESTOP" || !simulated;
       byId("stop").disabled = false;
       byId("estop").disabled = false;
@@ -270,6 +278,8 @@
   ["auto","manual","stop","estop","reset"].forEach(name => {
     byId(name).addEventListener("click", () => { releaseHold(); act(name); });
   });
+  byId("gesture-on").addEventListener("click", () => act("gesture_on"));
+  byId("gesture-off").addEventListener("click", () => act("gesture_off"));
   byId("release-target").addEventListener("click", () => targetAction({release: true}));
   byId("connect").addEventListener("click", async () => {
     const supplied = byId("token").value.trim();
