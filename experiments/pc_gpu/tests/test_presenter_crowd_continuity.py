@@ -117,7 +117,7 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
             [335, 332, 326], [],
             [{"x": 28, "y": 308, "source": "upper_body"},
              {"x": 216, "y": 263, "source": "face"},
-             {"x": 223, "y": 273, "source": "face"}]),
+             {"x": 360, "y": 210, "source": "face"}]),
             now=10.21)
         # Stored face 356,209 uniquely matches new ID 326 face 360,210.
         self.assertTrue(result.found, f'{lock.state} / {lock.reason} / {lock.display(now=10.21)}')
@@ -153,7 +153,7 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
             [{"x": 30, "y": 391, "source": "upper_body"},
              {"x": 136, "y": 361, "source": "upper_body"},
              {"x": 264, "y": 397, "source": "face"},
-             {"x": 222, "y": 274, "source": "face"}]),
+             {"x": 407, "y": 199, "source": "face"}]),
             now=10.21)
         self.assertTrue(result.found, f'{lock.state} / {lock.reason} / {lock.display(now=10.21)}')
         self.assertEqual(lock.state, "TRACKING")
