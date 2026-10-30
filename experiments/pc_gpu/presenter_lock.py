@@ -35,6 +35,9 @@ class PresenterLock:
         self.gesture_enabled = bool(gesture_enabled)
         # Separate SAFE-only foreground candidate mode; never arms motors.
         self.largest_person_enabled = False
+        # Gesture chooses the human; dominant face/size only help retain
+        # that selected human, never acquire the largest bystander.
+        self.hybrid_gesture_largest = False
         self._largest_streak = 0
         self._largest_track_id: Optional[int] = None
         self._largest_box: Optional[PersonBox] = None
@@ -229,6 +232,46 @@ class PresenterLock:
         self.reason = "LARGEST_LOCKED_REQUIRES_MANUAL_AUTO"
         self._largest_streak = 0
         return True
+
+    def _hybrid_dominant_successor(
+        self, detection: DetectionResult, *, now: float
+    ) -> Optional[PersonBox]:
+        """Largest person is only a continuity signal for a GESTURE lock.
+
+        Never acquire the largest person without an existing locked face.
+        A sudden closer passerby cannot steal the lock. A changed ByteTrack
+        ID needs a fresh and unique face matching the selected face, stable
+        body scale, and all other faces clearly separated.
+        """
+        if (not self.hybrid_gesture_largest or not self.locked
+                or self._locked is None or self._locked_aim is None
+                or self._locked_aim_source != "face"
+                or self._last_confirmed_at is None
+                or not 0 <= now - self._last_confirmed_at <= .25
+                or not isinstance(detection.aim_points, list)
+                or len(detection.aim_points) != len(self.candidates)):
+            return None
+        index = self._safe_largest_candidate(detection)
+        if index is None:
+            return None
+        chosen = self.candidates[index]
+        point = detection.aim_points[index]
+        old = self._locked
+        if (abs(point["x"] - self._locked_aim[0]) > 18
+                or abs(point["y"] - self._locked_aim[1]) > 18
+                or not .60 <= chosen.width / old.width <= 1.50
+                or not .60 <= chosen.height / old.height <= 1.50
+                or abs(chosen.cx - old.cx) > max(28., old.width * .27)
+                or abs(chosen.cy - old.cy) > max(28., old.height * .27)):
+            return None
+        new_id = self._candidate_track_ids[index] if self._candidate_track_ids else None
+        if new_id is None:
+            return None
+        if (self._locked_track_id is not None
+                and new_id != self._locked_track_id
+                and self._locked_track_id in self._candidate_track_ids):
+            return None
+        return chosen
 
     def observe(self, detection: DetectionResult, *, now: float) -> DetectionResult:
         """Process complete V2 frames; output only a human-locked person."""
@@ -524,6 +567,11 @@ class PresenterLock:
                     and .50 <= candidate.height / original.height <= 2.2
                     and abs(candidate.cx - original.cx) <= original.width * .85):
                 allowed = [candidate]
+        if self.hybrid_gesture_largest:
+            dominant = self._hybrid_dominant_successor(detection, now=now)
+            if dominant is not None:
+                # This is the EXISTING selected face; no new lock event/ARM.
+                allowed = [dominant]
         if len(candidates) > 1:
             # In dense crowds the bounding-box continuity test itself can
             # exclude the right person when the detector crops the body.
@@ -961,6 +1009,7 @@ class PresenterLock:
             "velocity_px_s": [round(self._velocity_x, 1),
                               round(self._velocity_y, 1)],
             "gesture_enabled": self.gesture_enabled,
+            "hybrid_gesture_largest": self.hybrid_gesture_largest,
             "largest_person_enabled": self.largest_person_enabled,
             "largest_candidate_index": (
                 self._safe_largest_candidate(detection=DetectionResult(
