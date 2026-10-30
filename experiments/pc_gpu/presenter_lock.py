@@ -473,6 +473,15 @@ class PresenterLock:
                 return suppressed
 
         original = self._locked
+        # Just-confirmed intentional gesture is a stronger identity cue than
+        # overlapping body boxes in this one acquisition frame. Its unique
+        # face was already checked against the rest of the crowd.
+        gesture_just_selected = (
+            self.reason == "GESTURE_SELECTED_PRESENTATION_TARGET"
+            and isinstance(detection.gesture_indices, list)
+            and len(detection.gesture_indices) == 1
+            and isinstance(self._last_gestures, list)
+        )
         allowed: list[PersonBox] = []
         # Constant-velocity prediction is a matching hint, never a motor target.
         # Only confirmed camera measurements update it (not missing frames).
@@ -611,6 +620,12 @@ class PresenterLock:
                     and .50 <= candidate.height / original.height <= 2.2
                     and abs(candidate.cx - original.cx) <= original.width * .85):
                 allowed = [candidate]
+        if gesture_just_selected and original is not None:
+            gesture_idx = detection.gesture_indices[0]
+            if (0 <= gesture_idx < len(candidates)
+                    and candidates[gesture_idx] is original
+                    and self._distinct_gesture_in_crowd(gesture_idx, detection)):
+                allowed = [original]
         if self.hybrid_gesture_largest:
             dominant = self._hybrid_dominant_successor(detection, now=now)
             if dominant is not None:
@@ -728,8 +743,14 @@ class PresenterLock:
                 return suppressed
         # A nearby second person can exchange places on the next frame.
         # Do not continue steering through an interaction/occlusion.
+        gesture_crowd_verified = (
+            gesture_just_selected
+            and chosen_index >= 0
+            and self._distinct_gesture_in_crowd(chosen_index, detection)
+        )
         if (
             self._near_another(chosen, candidates)
+            and not gesture_crowd_verified
             and not self._distinct_face_match(chosen, candidates, detection)
             and not self._separate_stable_tracked_face(
                 chosen, candidates, detection, now=now)
