@@ -605,17 +605,11 @@ class PresenterLock:
                 and self._last_confirmed_at is not None
                 and 0 <= now - self._last_confirmed_at <= .30
                 and bool(track_ids)
+                and len(track_ids) == len(candidates)
+                and 0 < len(candidates) <= 8
                 and self._locked_track_id not in track_ids
-                and len(candidates) <= 3
-                and all(
-                    hypot(
-                        max(box.x1 - self._locked_aim[0], 0,
-                            self._locked_aim[0] - box.x2),
-                        max(box.y1 - self._locked_aim[1], 0,
-                            self._locked_aim[1] - box.y2),
-                    ) >= max(65., detection.frame_width * .10)
-                    for box in candidates
-                )
+                and all(x is not None for x in track_ids)
+                and len(set(track_ids)) == len(track_ids)
             )
             # A crowd may briefly produce multiple plausible boxes for the
             # one selected target. Retain a bounded *stationary* visual hint
@@ -647,6 +641,34 @@ class PresenterLock:
             self._lose("TARGET_MISSING_OR_MULTIPLE_MATCHES")
             return suppressed
         chosen = allowed[0]
+        # While the old tracker ID was missing, keep a stationary visual
+        # memory. A new ID may resume only if the SAME confidently localized
+        # face is distinct and within 16 pixels of the last confirmed face.
+        # The dominance/box-size cue alone can never switch identity.
+        chosen_index = next(
+            (i for i, box in enumerate(candidates) if box is chosen), -1)
+        chosen_id = (track_ids[chosen_index] if track_ids
+                     and chosen_index >= 0 else None)
+        if (self.state == "TEMPORARILY_LOST"
+                and self._locked_track_id is not None
+                and chosen_id != self._locked_track_id):
+            aim = (detection.aim_points[chosen_index]
+                   if isinstance(detection.aim_points, list)
+                   and 0 <= chosen_index < len(detection.aim_points) else None)
+            plausible = (
+                isinstance(aim, dict) and aim.get("source") == "face"
+                and type(aim.get("x")) is int
+                and type(aim.get("y")) is int
+                and self._locked_aim is not None
+                and hypot(aim["x"] - self._locked_aim[0],
+                          aim["y"] - self._locked_aim[1]) <= 16
+                and .60 <= chosen.width / original.width <= 1.5
+                and .60 <= chosen.height / original.height <= 1.5
+                and not self._competing_face_near_locked(detection)
+            )
+            if not plausible:
+                self.reason = "HYBRID_WAIT_SAME_FACE_NO_MOTION"
+                return suppressed
         # A nearby second person can exchange places on the next frame.
         # Do not continue steering through an interaction/occlusion.
         if (
