@@ -430,6 +430,14 @@ class PresenterLock:
             ]
             if len(face_verified) == 1:
                 allowed = face_verified
+            if detection.frame_seq == 4 and now == 10.21 and self.gesture_enabled:
+                print("DBG_FACE_VERIFIED", len(face_verified),
+                      "allowed", len(allowed),
+                      "oldid", self._locked_track_id,
+                      "candidate_ids", track_ids,
+                      "oldface", self._locked_aim,
+                      "prior", self._locked,
+                      "verified", face_verified)
         if len(allowed) > 1:
             # A crowded frame can put multiple BODY boxes in the same area
             # even though just one trusted, fresh FACE remains there.
