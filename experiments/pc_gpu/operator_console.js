@@ -157,10 +157,14 @@
       byId("camera-resolution").textContent = (status.camera_resolution || "映像待機") +
         (status.camera_effective_fps == null ? "" : " · 実測 " + status.camera_effective_fps + " FPS") +
         (status.inference_ms == null ? "" : " · GPU推論 " + status.inference_ms + " ms") +
-        (captureMode && captureMode.fourcc ? " · カメラ形式 " + captureMode.fourcc : "") +
+        (captureMode && captureMode.local_inference ? " · USB直結" :
+          captureMode && captureMode.fourcc ? " · カメラ形式 " + captureMode.fourcc : "") +
         (cameraTiming && cameraTiming.capture_ms != null
-          ? " · 撮影 " + cameraTiming.capture_ms + " ms / 転送+推論 " +
-            fmt(cameraTiming.remote_infer_roundtrip_ms) + " ms" : "");
+          ? (captureMode && captureMode.local_inference
+              ? " · 撮影 " + cameraTiming.capture_ms + " ms / GPUローカル推論 " +
+                fmt(cameraTiming.local_infer_ms) + " ms"
+              : " · 撮影 " + cameraTiming.capture_ms + " ms / 転送+推論 " +
+                fmt(cameraTiming.remote_infer_roundtrip_ms) + " ms") : "");
       currentMode = status.mode;
       byId("mode").textContent = status.mode;
       const led = status.led_indicated_color || (
