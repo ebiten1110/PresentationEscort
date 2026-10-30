@@ -13,7 +13,7 @@
   let previewBusy = false;
   let previewObjectUrl = null;
   const byId = id => document.getElementById(id);
-  const controls = ["auto", "manual", "stop", "left", "right", "estop", "reset", "gesture-on", "gesture-off"];
+  const controls = ["auto", "manual", "stop", "left", "right", "estop", "reset", "gesture-on", "gesture-off", "largest-on", "largest-off"];
   const fmt = val => (val === null || val === undefined) ? "—" : String(val);
 
   async function call(path, obj) {
@@ -44,7 +44,7 @@
       const res = await call("/api/action", {action});
       pendingAuto = action === "auto" && !!res.pending;
       if (action === "auto" && res.ok) autoSession = true;
-      if (action === "stop" || action === "estop" || action === "reset" || action === "gesture-off") {
+      if (action === "stop" || action === "estop" || action === "reset" || action === "gesture-off" || action === "largest-off" || action === "largest-on") {
         pendingAuto = false;
         autoSession = false;
       }
@@ -109,7 +109,7 @@
     const candidates = Array.isArray(status.candidates) ? status.candidates : [];
     const lockName = status.lock_state || "UNAVAILABLE";
     const key = JSON.stringify([
-      status.frame_seq, lockName, status.mode, candidates,
+      status.frame_seq, lockName, status.mode, status.largest_candidate_index, candidates,
     ]);
     if (key === currentCandidatesKey) return;
     currentCandidatesKey = key;
@@ -133,7 +133,8 @@
       const button = document.createElement("button");
       button.textContent =
         (candidate.index === status.selected_index ? "● 追従対象 " :
-        candidate.gesturing ? "🙌 ジェスチャー " : "候補 ") +
+        candidate.gesturing ? "🙌 ジェスチャー " :
+        candidate.index === status.largest_candidate_index ? "★ 最大候補 " : "候補 ") +
         (candidate.index + 1) +
         "（左右 " + candidate.x_percent + "% / 上下 " +
         candidate.y_percent + "% / 信頼度 " +
@@ -295,9 +296,18 @@
       byId("auto").disabled = !status.auto_ready ||
         status.mode !== "SAFE" || !!status.fw_arm_pending || pendingAuto;
       const gestureEnabled = status.gesture_control_enabled === true;
+      const largestEnabled = status.largest_control_enabled === true;
       byId("gesture-on").disabled = simulated || status.mode !== "SAFE" || gestureEnabled;
       byId("gesture-off").disabled = simulated || !gestureEnabled;
+      byId("largest-on").disabled = simulated || status.mode !== "SAFE" || largestEnabled;
+      byId("largest-off").disabled = simulated || status.mode !== "SAFE" || !largestEnabled;
+      byId("largest-on").textContent = largestEnabled
+        ? "最大人物を選択中（手動AUTOが必要）"
+        : "最大の人物を自動ロック（別モード）";
       byId("gesture-on").textContent = gestureEnabled ? "ジェスチャー待機中" : "ジェスチャー追従を待機";
+      byId("largest-help").textContent = largestEnabled
+        ? "一番大きい人物を候補として連続確認中。緑でロックされたら、操作者が対象と周囲の安全を確認してから手動AUTOを押してください。自動ARMはしません。"
+        : "最大人物モードはジェスチャー待機との切替式。前景の顔が一意で8フレーム安定した人だけ選びます。選択後も手動AUTOが必要です。";
       byId("gesture-help").textContent = gestureEnabled
         ? "待機中：両手を頭より上に挙げて保持。認識後、対象が緑になり、ESP32へのAUTO切替を試みます。"
         : "待機を有効にし、両手を頭より上に挙げて保持。見失ったら停止し、再度ジェスチャーで開始。";
@@ -355,6 +365,8 @@
   });
   byId("gesture-on").addEventListener("click", () => act("gesture_on"));
   byId("gesture-off").addEventListener("click", () => act("gesture_off"));
+  byId("largest-on").addEventListener("click", () => act("largest_on"));
+  byId("largest-off").addEventListener("click", () => act("largest_off"));
   byId("release-target").addEventListener("click", () => targetAction({release: true}));
   byId("download-diagnostics").addEventListener("click", async () => {
     const button = byId("download-diagnostics");
