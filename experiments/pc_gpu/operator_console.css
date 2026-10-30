@@ -1,0 +1,61 @@
+:root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif;background:#0c1420;color:#eaf2fa}
+*{box-sizing:border-box}
+body{margin:0}
+main{max-width:1520px;margin:auto;padding:12px 20px;min-height:100dvh;height:100dvh;display:flex;flex-direction:column;gap:10px}
+header{min-height:54px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{display:flex;align-items:center;gap:16px}.brand strong{font-size:20px}.brand span{font-size:11px;color:#9babbe}
+.connection{display:flex;flex-wrap:wrap;gap:15px;font-size:12px;color:#a6b6ce}.connection b{color:#eaf2fa}
+.auth{display:flex;align-items:center;gap:10px;background:#152236;padding:9px 12px;border:1px solid #334661;border-radius:11px}
+.auth label{font-size:12px;color:#aabbd0}.auth input{flex:1;min-width:120px;padding:9px 12px;background:#0e1929;color:white;border:1px solid #536985;border-radius:8px}
+body.authorized .auth{display:none}
+button{font:inherit;cursor:pointer;touch-action:manipulation;border-radius:10px;border:1px solid #4569a2;background:#2a518b;color:white;min-height:38px;padding:9px 14px;font-weight:700}
+button:disabled{opacity:.4;cursor:not-allowed}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #f1bf55;outline-offset:2px}
+button:hover:not(:disabled){filter:brightness(1.12)}
+.status-strip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.status-strip>div{min-height:62px;border:1px solid #334661;border-radius:10px;background:#152236;padding:8px 12px;display:flex;flex-direction:column;justify-content:center;gap:4px}
+small,.status-strip small{font-size:11px;color:#92abc7}
+.status-strip strong{font-size:16px;overflow-wrap:anywhere}
+.workspace{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(340px,.9fr);gap:12px;min-height:0;flex:1}
+.camera-pane,.control-pane{background:#142236;border:1px solid #344760;border-radius:12px;padding:12px;min-height:0;display:flex;flex-direction:column;gap:10px}
+.pane-heading{display:flex;justify-content:space-between;align-items:center;gap:8px}.pane-heading h2{font-size:16px;margin:0}.pane-heading span{font-size:11px;color:#94acc6}
+.video-frame{background:#080e18;border-radius:10px;flex:1;min-height:165px;display:grid;place-items:center;overflow:hidden;position:relative}
+#camera-preview{width:100%;height:100%;max-height:100%;object-fit:contain;display:none;cursor:crosshair}
+#video-placeholder{font-size:14px;color:#9ab0c7;position:absolute}
+.video-frame.has-preview #camera-preview{display:block}.video-frame.has-preview #video-placeholder{display:none}
+.candidate-row{display:flex;gap:8px;align-items:center}
+#candidates{display:flex;gap:7px;flex-wrap:wrap;flex:1;min-width:0}
+#candidates button{background:#253e5e;font-size:12px;padding:6px 9px;min-height:34px}
+.quiet{background:transparent;color:#bbcbe0;border-color:#586b83}
+.small-text{font-size:11px;color:#95adc7;margin:0;min-height:22px}
+.current-mode{background:#0d1929;border:1px solid #283b55;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:7px;font-size:12px}
+.primary{background:#256cbd;border-color:#4b94e7;font-size:17px;padding:15px}
+.secondary{background:#26455d;border-color:#547690;font-size:15px}
+.emergency{background:#bd2a3f;border-color:#ee5d72;font-size:16px;padding:15px}
+#feedback{background:#0d1929;margin:0;padding:10px;border-radius:9px;min-height:42px;font-size:12px;color:#bfd6ed;overflow-wrap:anywhere}
+.quick-diag{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.quick-diag>div{background:#0d1929;padding:10px;border-radius:9px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.quick-diag strong{font-size:11px;overflow-wrap:anywhere}
+.advanced{border-top:1px solid #3b516d;padding-top:10px;overflow-y:auto;min-height:0}
+.advanced summary{cursor:pointer;color:#adc9e9;font-size:13px;user-select:none}
+dl{margin:10px 0}dl>div{display:flex;justify-content:space-between;gap:8px;border-top:1px solid #2c425e;padding:7px 0}dt,dd{font-size:11px;overflow-wrap:anywhere}dt{color:#9fb4cc}dd{margin:0;text-align:right;max-width:67%}
+.manual-actions{display:flex;flex-wrap:wrap;gap:6px}.manual-actions button{flex:1;min-width:90px;font-size:11px}
+footer{font-size:10px;color:#8194ac;text-align:center}
+@media(min-width:851px){body.authorized main{height:100dvh}}
+@media(max-width:850px){main{height:auto;min-height:100dvh}.workspace{grid-template-columns:1fr}.video-frame{height:auto;aspect-ratio:4/3}.status-strip{grid-template-columns:repeat(3,minmax(0,1fr))}.connection{font-size:10px}header{flex-wrap:wrap}.auth{flex-wrap:wrap}.camera-pane,.control-pane{min-height:unset}}
+@media(max-width:550px){main{padding:8px}.status-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.brand{flex-wrap:wrap}.connection{gap:7px}.candidate-row{flex-wrap:wrap}}
+
+.gesture-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.gesture-controls button{font-size:13px}
+#gesture-help{color:#a8c8e7;line-height:1.35}
+@media(max-width:440px){.gesture-controls{grid-template-columns:1fr}}
+
+/* Physical RGB status LED is driven by ESP32; this is its reported intent. */
+.led-status strong{display:flex;gap:9px;align-items:center}
+.led-dot{width:16px;height:16px;flex-shrink:0;border-radius:50%;border:1px solid #869ab5;display:inline-block}
+.led-dot.red{background:#ed3555;box-shadow:0 0 11px #ed355599}
+.led-dot.yellow{background:#ffd535;box-shadow:0 0 11px #ffd53599}
+.led-dot.white{background:#f7f9fc;box-shadow:0 0 11px #ffffffaa}
+.status-strip{grid-template-columns:repeat(6,minmax(0,1fr))}
+@media(max-width:850px){.status-strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:550px){.status-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}

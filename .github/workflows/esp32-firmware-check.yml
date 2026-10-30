@@ -1,0 +1,41 @@
+name: ESP32 safety watchdog native test and firmware compile
+
+on:
+  push:
+    branches:
+      - feature/pc-gpu-follow-2026-10-28
+    paths:
+      - "esp32/**"
+      - ".github/workflows/esp32-firmware-check.yml"
+  pull_request:
+    paths:
+      - "esp32/**"
+      - ".github/workflows/esp32-firmware-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile pure C++ state machine and run native assertions
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+              esp32/test/test_safety_watchdog_native.cpp \
+              -o /tmp/pe-safety-native
+          /tmp/pe-safety-native
+
+  esp32-firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PlatformIO Core
+        run: python -m pip install "platformio>=6.1,<7"
+      - name: Build firmware (compile only — NO upload)
+        run: python -m platformio run --project-dir esp32

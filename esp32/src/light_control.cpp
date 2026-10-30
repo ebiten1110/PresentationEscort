@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "light_control.h"
+#include "safety_runtime.h"
 
 
 // ============================================================
@@ -52,6 +53,9 @@ static constexpr bool RGB_COMMON_ANODE = false;
 // ============================================================
 
 static constexpr unsigned long ERROR_BLINK_INTERVAL_MS = 300;
+// Pi must continuously renew WAIT over UART. On cable loss, disarmed status
+// reverts to RED without needing a command from the absent Pi.
+static constexpr unsigned long WAIT_LED_LEASE_MS = 1200;
 
 
 // ============================================================
@@ -62,6 +66,9 @@ static LightMode currentMode = LightMode::OFF;
 
 static bool errorBlinkVisible = false;
 static unsigned long lastBlinkTimeMs = 0;
+static unsigned long lastWaitRefreshMs = 0;
+static bool waitRequested = false;
+static bool previouslyArmed = false;
 
 
 // ============================================================
@@ -164,7 +171,10 @@ void initLightControl() {
   pinMode(RGB_GREEN_PIN, OUTPUT);
   pinMode(RGB_BLUE_PIN, OUTPUT);
 
-  currentMode = LightMode::OFF;
+  currentMode = LightMode::RED;
+  waitRequested = false;
+  lastWaitRefreshMs = 0;
+  previouslyArmed = false;
   errorBlinkVisible = false;
   lastBlinkTimeMs = millis();
 
@@ -195,34 +205,40 @@ void initLightControl() {
 
 
 void updateLightControl() {
-  if (
-    currentMode
-    != LightMode::ERROR_BLINK
-  ) {
-    return;
+  // The ESP32 watchdog, not a GUI claim, determines whether tracking is on.
+  // WHITE is visible only while firmware is ARMED. No motor command bypass.
+  const bool armed = isSafetyMotionAllowed();
+  // Any transition out of ARMED means motion stopped (including watchdog
+  // timeout). Immediately drop the old yellow lease, so failure looks RED.
+  if (previouslyArmed && !armed) {
+    waitRequested = false;
   }
-
-  const unsigned long nowMs = millis();
-
-  if (
-    nowMs - lastBlinkTimeMs
-    < ERROR_BLINK_INTERVAL_MS
-  ) {
-    return;
+  previouslyArmed = armed;
+  const unsigned long now = millis();
+  const bool freshWait = waitRequested && !armed
+      && (now - lastWaitRefreshMs < WAIT_LED_LEASE_MS);
+  const LightMode desired = armed ? LightMode::WHITE
+      : freshWait ? LightMode::YELLOW : LightMode::RED;
+  if (desired != currentMode) {
+    currentMode = desired;
+    errorBlinkVisible = false;
+    applyCurrentMode();
   }
-
-  lastBlinkTimeMs = nowMs;
-  errorBlinkVisible = !errorBlinkVisible;
-
-  applyCurrentMode();
 }
-
 
 // ============================================================
 // モード設定
 // ============================================================
 
 void setLightMode(LightMode mode) {
+  // The status LED belongs to the safety protocol. Yellow is only a
+  // renewable WAIT request, not permission to ARM or to move.
+  if (mode == LightMode::YELLOW) {
+    waitRequested = true;
+    lastWaitRefreshMs = millis();
+  } else if (mode != LightMode::WHITE) {
+    waitRequested = false;
+  }
   if (currentMode == mode) {
     return;
   }

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Presentation Escort | 操作コンソール</title>
+  <link rel="stylesheet" href="/ui.css">
+  <script src="/ui.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand"><strong>Presentation Escort</strong><span id="runtime-subtitle">ロボット操作コンソール</span></div>
+      <div class="connection"><span id="auth-message">未接続</span><span>GPU <b id="pc">—</b></span><span>ESP32 <b id="fw">—</b></span></div>
+    </header>
+    <section class="auth" id="auth-panel">
+      <label for="token">Piに表示された操作トークン</label>
+      <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="オペレータートークン">
+      <button id="connect">接続</button>
+    </section>
+    <section class="status-strip">
+      <div class="led-status"><small>状態ランプ（実機の電気的検出ではない）</small>
+        <strong><span id="led-dot" class="led-dot red"></span><span id="led-label">赤・停止</span></strong></div>
+      <div><small>モード</small><strong id="mode">未接続</strong></div>
+      <div><small>対象検出</small><strong id="person">—</strong></div>
+      <div><small>発表者ロック</small><strong id="lock-state">—</strong></div>
+      <div><small>AUTO準備</small><strong id="ready">—</strong></div>
+      <div><small>遅延</small><strong id="rtt">—</strong></div>
+    </section>
+    <section class="workspace">
+      <section class="camera-pane">
+        <div class="pane-heading"><h2>カメラ・中心合わせ</h2><span><span id="camera-resolution">—</span> · 緑：選択中 / 灰：その他</span></div>
+        <div class="video-frame" id="video-frame">
+          <img id="camera-preview" alt="カメラ映像・人物検出" draggable="false">
+          <div id="video-placeholder">カメラ映像の接続待ち</div>
+        </div>
+        <div class="candidate-row">
+          <div id="candidates"></div>
+          <button id="release-target" class="quiet" disabled>選択解除</button>
+        </div>
+        <p id="lock-message" class="small-text">顔の橙丸から中央の白丸へ矢印が出ます。中央付近＝首、それより外側＝本体旋回を準備。完全に見失ったら停止します。</p>
+      </section>
+      <section class="control-pane">
+        <div class="pane-heading"><h2>追従コントロール</h2></div>
+        <div class="current-mode"><small>モーター制御</small><span id="motor">未確認</span></div>
+        <div class="gesture-controls">
+          <button id="gesture-on" class="primary" disabled>ジェスチャー追従を待機</button>
+          <button id="gesture-off" class="quiet" disabled>ジェスチャー待機を解除</button>
+          <button id="largest-on" hidden disabled>最大人物モード（旧互換）</button>
+          <button id="largest-off" hidden disabled>最大人物モード解除（旧互換）</button>
+        </div>
+        <p id="gesture-help" class="small-text">カメラ起動後は自動でジェスチャー待機。両手を頭より上に挙げると追従を開始します。短い見失いは同じ人の顔を照合して復帰します。</p>
+        <p id="largest-help" class="small-text">統合追従：両手を挙げて対象を決定。その後、同じ顔・追跡ID・人物の見かけの大きさで継続追跡します。ジェスチャー以外の操作で開始する必要はありません。</p>
+        <p id="body-motion-note" class="small-text">本体動作：起動モードを確認中</p>
+        <button id="auto" class="secondary" hidden disabled>手動でAUTOを開始（開発者用）</button>
+        <button id="stop" class="secondary" disabled>停止 / SAFE</button>
+        <button id="estop" class="emergency" disabled>緊急停止（ESTOP）</button>
+        <button id="reset" class="quiet" disabled>緊急停止を解除する</button>
+        <p id="feedback" role="status" aria-live="polite">ロボットは明示的に開始するまで動きません。</p>
+        <div class="quick-diag">
+          <div><small>ESP32応答</small><strong id="fw-arm-status">—</strong></div>
+          <div><small>異常</small><strong id="fault-cause">なし</strong></div>
+        </div>
+          <div class="diagnostic-export">
+            <button id="download-diagnostics" class="quiet" disabled>診断データを保存（画像＋判定 ZIP）</button>
+            <span id="diagnostic-export-note" class="small-text">取得するには診断記録を有効にして起動してください。人物画像を含みます。</span>
+          </div>
+        <details class="advanced">
+          <summary>詳細診断・手動操作（開発者向け）</summary>
+          <dl>
+            <div><dt>モード理由</dt><dd id="reason">—</dd></div>
+            <div><dt>最終命令</dt><dd id="last">—</dd></div>
+            <div><dt>最終イベント</dt><dd id="event">—</dd></div>
+            <div><dt>発表者判定</dt><dd id="lock-reason">—</dd></div>
+            <div><dt>ESP32内部角度</dt><dd id="esp32-head-feedback">—</dd></div>
+            <div><dt>カメラプレビュー</dt><dd id="preview-status">—</dd></div>
+            <div><dt>本体 / Busy</dt><dd id="esp32-walking-feedback">—</dd></div>
+            <div><dt>PWM診断</dt><dd id="esp32-servo-diagnostic">—</dd></div>
+            <div><dt>追従計画</dt><dd id="follow-debug">—</dd></div>
+            <div><dt>切り分け</dt><dd id="motion-diagnosis">—</dd></div>
+          </dl>
+          <div class="manual-actions">
+            <button id="manual" disabled>MANUAL</button>
+            <button id="left" disabled>左旋回</button>
+            <button id="right" disabled>右旋回</button>
+          </div>
+        </details>
+      </section>
+    </section>
+    <footer>対象の自動選択とモーターの自動起動は別です。STOPでは物理電源を遮断できません。</footer>
+  </main>
+</body>
+</html>

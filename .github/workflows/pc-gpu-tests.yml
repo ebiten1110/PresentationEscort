@@ -1,0 +1,38 @@
+name: PC GPU protocol and target adapter tests
+
+on:
+  push:
+    branches:
+      - feature/pc-gpu-follow-2026-10-28
+    paths:
+      - "experiments/pc_gpu/**"
+      - ".github/workflows/pc-gpu-tests.yml"
+  pull_request:
+    paths:
+      - "experiments/pc_gpu/**"
+      - ".github/workflows/pc-gpu-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stdlib-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Phase 10 ancestry/rollback source audit
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check pinned Phase 9 source baseline before testing
+        run: python experiments/pc_gpu/phase10_release.py check
+      - name: Compile all experiment Python modules
+        run: python -m compileall -q experiments/pc_gpu
+      - name: Verify operator-console JavaScript syntax
+        run: node --check experiments/pc_gpu/operator_console.js
+      - name: Run PC-GPU protocol, target and safety unit tests
+        run: python -m unittest discover -s experiments/pc_gpu/tests -v

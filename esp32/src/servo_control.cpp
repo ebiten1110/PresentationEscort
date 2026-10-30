@@ -74,9 +74,22 @@ void initServoControl() {
 
   delay(10);
 
-  centerAllServos();
+  // POWER-UP POLICY: never issue neutral-position PWM on boot.
+  // Servo mechanics may not be at the nominal zero pose; energizing a
+  // previously commanded center can cause an unexpected full-body jump.
+  // Clear ALL PWM outputs while the independent servo V+ stays OFF.
+  // This is a startup precaution, NOT a substitute for a physical E-stop.
+  stopAllServos();
 
-  Serial.println("[Servo] Initialized.");
+  // Diagnostic only: I2C ACK cannot prove servo power or actual motion.
+  Wire.beginTransmission(PCA9685_ADDRESS);
+  const bool pcaConnected = (Wire.endTransmission() == 0);
+  Serial.print("[ServoDiag] PCA9685_I2C=");
+  Serial.print(pcaConnected ? "ACK" : "NO_ACK");
+  Serial.print(" address=0x");
+  Serial.println(PCA9685_ADDRESS, HEX);
+
+  Serial.println("[Servo] Initialized with PWM outputs OFF (no auto-center).");
 }
 
 
@@ -107,6 +120,20 @@ void setServoAngle(
     0,
     duty
   );
+
+  if (ch == CH_HEAD_YAW || ch == CH_HEAD_PITCH) {
+    // Records PWM requests and I2C ACK, not a measured shaft angle.
+    Wire.beginTransmission(PCA9685_ADDRESS);
+    const bool acknowledged = (Wire.endTransmission() == 0);
+    Serial.print("[ServoDiag] PWM ch=");
+    Serial.print(ch);
+    Serial.print(" angle=");
+    Serial.print(angle, 1);
+    Serial.print(" duty=");
+    Serial.print(duty);
+    Serial.print(" i2c=");
+    Serial.println(acknowledged ? "ACK" : "NO_ACK");
+  }
 
   if (SERVO_DEBUG_LOG) {
     Serial.print("[Servo] CH=");
