@@ -79,6 +79,53 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
                          "reappearance must never synthesize an ARM gesture")
         self.assertTrue(restored.found)
 
+    def test_crowd_two_body_matches_but_only_one_matching_face(self):
+        # At diagnostic frame 967 target ID 83 temporarily becomes 326.
+        # Other person (332) has a separate face, though body boxes overlap.
+        lock = self.selected()
+        result = lock.observe(self.frame(
+            4, [self.person(0, 257, 55, 480, .70),
+                self.person(94, 141, 370, 480, .60),
+                self.person(270, 128, 525, 480, .55)],
+            [335, 332, 326], [],
+            [{"x": 28, "y": 308, "source": "upper_body"},
+             {"x": 216, "y": 263, "source": "face"},
+             {"x": 223, "y": 273, "source": "face"}]),
+            now=10.21)
+        # Last sample face was (221,275): the chosen face is (223,273).
+        self.assertTrue(result.found)
+        self.assertEqual(lock.state, "TRACKING")
+        self.assertEqual(lock.gesture_event_id, 1)
+
+    def test_crowd_nearby_bodies_but_distinct_faces_keep_lock(self):
+        lock = self.selected()
+        result = lock.observe(self.frame(
+            4, [self.person(0, 365, 59, 480, .76),
+                self.person(48, 326, 223, 480, .52),
+                self.person(207, 351, 324, 480, .65),
+                self.person(213, 108, 621, 478, .58)],
+            [360, 378, 379, 83], [],
+            [{"x": 30, "y": 391, "source": "upper_body"},
+             {"x": 136, "y": 361, "source": "upper_body"},
+             {"x": 264, "y": 397, "source": "face"},
+             {"x": 222, "y": 274, "source": "face"}]),
+            now=10.21)
+        self.assertTrue(result.found)
+        self.assertEqual(lock.state, "TRACKING")
+
+    def test_unresolved_multi_candidate_ambiguity_stops_motors(self):
+        lock = self.selected()
+        # Two plausible bodies, no uniquely discriminating selected face.
+        result = lock.observe(self.frame(
+            4, [self.person(33, 152, 392, 479, .70),
+                self.person(46, 157, 389, 479, .69)],
+            [21, 41], [],
+            [{"x": 221, "y": 275, "source": "shoulders"},
+             {"x": 299, "y": 275, "source": "shoulders"}]),
+            now=10.21)
+        self.assertFalse(result.found)
+        self.assertNotEqual(lock.state, "TRACKING")
+
     def test_candidate_with_wrong_or_duplicate_track_id_is_rejected(self):
         lock = self.selected()
         result = lock.observe(self.frame(
