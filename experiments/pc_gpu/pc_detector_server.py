@@ -13,6 +13,7 @@ from ultralytics import YOLO
 from detection_protocol import DetectionResult, recv_message, send_json
 from person_tracker import PersonBox, PersonTracker
 from gesture_pose import both_hands_over_head, face_or_upper_body_aim
+from crowd_pose_dedup import collapse_same_face_duplicates
 
 
 @dataclass
@@ -109,6 +110,15 @@ class PersonDetector:
                         pose_points.append(points)
                     else:
                         pose_points.append([])
+
+        # Crowd robustness: YOLO can output two overlapping boxes with
+        # different ByteTrack IDs for one identical face. Collapse only
+        # conservative same-face duplicates *before* building V2 metadata.
+        # Never merge distinct faces or uncertain equal-confidence detections.
+        candidates, pose_points, candidate_track_ids = (
+            collapse_same_face_duplicates(
+                candidates, pose_points, candidate_track_ids)
+        )
 
         # Protocol V2 transfers every valid person candidate. The Pi makes
         # the final operator-confirmed association; confidence MUST NOT
