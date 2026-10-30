@@ -56,6 +56,32 @@ class HybridGestureLargestTests(unittest.TestCase):
         self.assertEqual(lock._locked_track_id,71)
         self.assertEqual(lock.gesture_event_id,1)
 
+    def test_gesture_amid_overlapping_bodies_with_distinct_faces(self):
+        lock=PresenterLock(gesture_enabled=True,gesture_confirm_frames=3)
+        lock.hybrid_gesture_largest=True
+        for seq in (1,2,3):
+            result=lock.observe(frame(
+                seq,
+                [(130,100,420,475,.88),(280,160,590,480,.90)],
+                [71,90],
+                [(203,140,"face"),(478,215,"face")],
+                [0]),now=10+seq*.07)
+        self.assertTrue(result.found, lock.reason)
+        self.assertEqual(lock._locked_track_id,71)
+
+    def test_near_duplicate_faces_never_trigger_auto_gesture(self):
+        lock=PresenterLock(gesture_enabled=True,gesture_confirm_frames=3)
+        lock.hybrid_gesture_largest=True
+        for seq in (1,2,3,4):
+            result=lock.observe(frame(
+                seq,
+                [(130,100,420,475,.88),(160,130,450,480,.90)],
+                [71,90],
+                [(203,140,"face"),(215,145,"face")],
+                [0]),now=10+seq*.07)
+            self.assertFalse(result.found)
+        self.assertEqual(lock.gesture_event_id,0)
+
     def test_larger_bystander_cannot_takeover_existing_gesture_target(self):
         lock=self.begin()
         result=lock.observe(frame(
