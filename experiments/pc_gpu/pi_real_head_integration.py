@@ -815,17 +815,27 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.gateway.firmware_safety_status() != "ARMED" or
                 self.presenter.state != "TRACKING" or
                 self.presenter._locked is None or
-                len(self.presenter.candidates) != 1 or
                 self.presenter._frame_time is None or
-                not 0 <= now - self.presenter._frame_time <= .45 or
+                not 0 <= now - self.presenter._frame_time <= .35 or
                 detection.error or detection.protocol_version != 2 or
                 type(detection.frame_seq) is not int or
                 detection.frame_seq != self.presenter._last_seq + 1 or
-                detection.people != [] or
+                not isinstance(detection.people, list) or
+                len(detection.people) > 8 or
                 self.presenter._frame_size != (detection.frame_width,
                                                detection.frame_height) or
                 not math.isfinite(rtt_ms) or not 0 <= rtt_ms <= 500):
             return False
+        if detection.people:
+            # Other people may remain in view when the original track ID
+            # disappears. Hold the existing AUTO lease for visual recovery,
+            # but make NO head/leg moves without fresh identity evidence.
+            old_track = self.presenter._locked_track_id
+            ids = detection.track_ids
+            if (old_track is None or not isinstance(ids, list)
+                    or not ids or old_track in ids
+                    or len(ids) != len(detection.people)):
+                return False
         previous = getattr(self, "_last_cycle", None)
         if previous is None or not previous.target_valid:
             return False
@@ -957,6 +967,18 @@ class LockedRealRuntime(LockedSimulationRuntime):
     def set_camera_state(self, active: bool, connected: bool) -> None:
         with self._guard:
             super().set_camera_state(active, connected)
+            if connected and active and self.head_enabled and (
+                    self.gateway.status().safety.mode == Mode.SAFE):
+                # A deliberate gesture starts AUTO; no additional manual
+                # operator ARM or separate 'largest person' mode is needed.
+                self.gesture_control_enabled = True
+                self.largest_control_enabled = False
+                self.presenter.largest_person_enabled = False
+                self.presenter.gesture_enabled = True
+                self.presenter.hybrid_gesture_largest = True
+                self.presenter.clear("HYBRID_WAIT_GESTURE")
+                self._gesture_handled_event = self.presenter.gesture_event_id
+                self._gesture_pending_event = 0
             if not connected:
                 self._last_detection_at = None
                 self._camera_interval_s = None
@@ -968,6 +990,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.gesture_control_enabled = False
                 self.largest_control_enabled = False
                 self.presenter.largest_person_enabled = False
+                self.presenter.hybrid_gesture_largest = False
                 self.presenter.gesture_enabled = True
                 self._gesture_pending_event = 0
                 self._search_direction = None
@@ -1083,6 +1106,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 if self._camera_interval_s is not None and self._camera_interval_s > 0
                 else None)
             status["gesture_control_enabled"] = self.gesture_control_enabled
+            status["hybrid_mode_enabled"] = self.presenter.hybrid_gesture_largest
             status["largest_control_enabled"] = self.largest_control_enabled
             status["search_state"] = ("SEARCHING" if self.gateway.safety.recovering
                                       else self._search_result)
@@ -1340,12 +1364,14 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.presenter.largest_person_enabled = False
                 self.presenter.gesture_enabled = True
                 self.gesture_control_enabled = True
+                self.presenter.hybrid_gesture_largest = True
                 self.presenter.clear("WAIT_BOTH_HANDS_OVER_HEAD")
                 self._gesture_handled_event = self.presenter.gesture_event_id
                 self._gesture_pending_event = 0
                 return {"ok": True, "gesture_control_enabled": True}
             if action == "gesture_off":
                 self.gesture_control_enabled = False
+                self.presenter.hybrid_gesture_largest = False
                 self._gesture_pending_event = 0
                 self._search_direction = None
                 self._search_result = "CANCELED"
@@ -1356,6 +1382,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.largest_control_enabled = False
                 self.presenter.largest_person_enabled = False
                 self.presenter.gesture_enabled = True
+                self.presenter.hybrid_gesture_largest = False
                 self.gesture_control_enabled = False
                 self._gesture_pending_event = 0
                 self._search_direction = None
