@@ -55,7 +55,7 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
             [{"x": 230, "y": 272, "source": "face"},
              {"x": 481, "y": 450, "source": "shoulders"}]),
             now=10.21)
-        self.assertTrue(result.found)
+        self.assertTrue(result.found, f'{lock.state} / {lock.reason} / {lock.display(now=10.21)}')
         self.assertEqual(lock.state, "TRACKING")
         self.assertEqual(lock.gesture_event_id, 1)
 
@@ -105,7 +105,7 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
              {"x": 223, "y": 273, "source": "face"}]),
             now=10.21)
         # Stored face 356,209 uniquely matches new ID 326 face 360,210.
-        self.assertTrue(result.found)
+        self.assertTrue(result.found, f'{lock.state} / {lock.reason} / {lock.display(now=10.21)}')
         self.assertEqual(lock.state, "TRACKING")
         self.assertEqual(lock.gesture_event_id, 1)
 
@@ -123,7 +123,7 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
              {"x": 264, "y": 397, "source": "face"},
              {"x": 222, "y": 274, "source": "face"}]),
             now=10.21)
-        self.assertTrue(result.found)
+        self.assertTrue(result.found, f'{lock.state} / {lock.reason} / {lock.display(now=10.21)}')
         self.assertEqual(lock.state, "TRACKING")
 
     def test_unresolved_multi_candidate_ambiguity_stops_motors(self):
