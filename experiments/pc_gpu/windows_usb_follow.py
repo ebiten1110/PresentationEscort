@@ -50,29 +50,37 @@ class LocalUsbCameraWorker(threading.Thread):
                    else [self.backend])
         backend_codes = {"dshow": cv2.CAP_DSHOW, "msmf": cv2.CAP_MSMF}
         for name in choices:
-            cam = cv2.VideoCapture(self.camera_index, backend_codes[name])
-            if not cam.isOpened():
+            for request_mjpeg in (True, False):
+                cam = cv2.VideoCapture(self.camera_index, backend_codes[name])
+                if not cam.isOpened():
+                    cam.release()
+                    continue
+                # MJPEG is optional. Fall back to camera-native format if it
+                # causes the same stream errors seen on the Pi.
+                if request_mjpeg:
+                    cam.set(cv2.CAP_PROP_FOURCC,
+                            cv2.VideoWriter_fourcc(*"MJPG"))
+                cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.image_width)
+                cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.image_height)
+                cam.set(cv2.CAP_PROP_FPS, self.camera_fps)
+                cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                ok, frame = cam.read()
+                if ok and frame is not None:
+                    print(f"[Camera] {name} index={self.camera_index} "
+                          f"mjpeg={request_mjpeg} "
+                          f"actual={frame.shape[1]}x{frame.shape[0]}",
+                          flush=True)
+                    self.runtime.set_capture_diagnostics({
+                        "local_inference": True,
+                        "backend": name,
+                        "camera_index": self.camera_index,
+                        "requested_mjpeg": request_mjpeg,
+                        "reported_fps": cam.get(cv2.CAP_PROP_FPS),
+                    })
+                    return cam, frame
+                print(f"[Camera] {name} mjpeg={request_mjpeg} "
+                      "opened but first read failed", flush=True)
                 cam.release()
-                continue
-            # Request a standard, widely supported USB-camera format.
-            cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.image_width)
-            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.image_height)
-            cam.set(cv2.CAP_PROP_FPS, self.camera_fps)
-            cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            ok, frame = cam.read()
-            if ok and frame is not None:
-                print(f"[Camera] {name} index={self.camera_index} "
-                      f"actual={frame.shape[1]}x{frame.shape[0]}", flush=True)
-                self.runtime.set_capture_diagnostics({
-                    "local_inference": True,
-                    "backend": name,
-                    "camera_index": self.camera_index,
-                    "reported_fps": cam.get(cv2.CAP_PROP_FPS),
-                })
-                return cam, frame
-            print(f"[Camera] {name} opened but first read failed", flush=True)
-            cam.release()
         raise RuntimeError(
             "USB_CAMERA_UNAVAILABLE: verify camera index, Windows camera "
             "permission, USB data cable, and other apps using the camera"
