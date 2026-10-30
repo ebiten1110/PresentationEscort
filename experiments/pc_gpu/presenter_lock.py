@@ -233,6 +233,48 @@ class PresenterLock:
         self._largest_streak = 0
         return True
 
+    def _distinct_gesture_in_crowd(
+        self, index: int, detection: DetectionResult
+    ) -> bool:
+        """Permit one deliberate gesture despite overlapping *body* boxes.
+
+        Requires exactly one gesturing person, stable confident face keypoint,
+        unique tracker IDs and other confidently separate faces (or bodies
+        clearly below/away from the raised-hand person's face).
+        """
+        if (not self.hybrid_gesture_largest
+                or not isinstance(detection.gesture_indices, list)
+                or detection.gesture_indices != [index]
+                or not isinstance(detection.aim_points, list)
+                or len(detection.aim_points) != len(self.candidates)
+                or not isinstance(self._candidate_track_ids, list)
+                or len(self._candidate_track_ids) != len(self.candidates)
+                or any(x is None for x in self._candidate_track_ids)
+                or len(set(self._candidate_track_ids)) != len(self.candidates)):
+            return False
+        point = detection.aim_points[index]
+        if (not isinstance(point, dict) or point.get("source") != "face"
+                or type(point.get("x")) is not int
+                or type(point.get("y")) is not int):
+            return False
+        x, y = point["x"], point["y"]
+        separation = max(70., detection.frame_width * .11)
+        for other_i, other in enumerate(self.candidates):
+            if other_i == index:
+                continue
+            face = detection.aim_points[other_i]
+            if (isinstance(face, dict) and face.get("source") == "face"
+                    and type(face.get("x")) is int
+                    and type(face.get("y")) is int):
+                if hypot(face["x"] - x, face["y"] - y) < separation:
+                    return False
+            else:
+                dx = max(other.x1 - x, 0, x - other.x2)
+                dy = max(other.y1 - y, 0, y - other.y2)
+                if hypot(dx, dy) < separation:
+                    return False
+        return True
+
     def _hybrid_dominant_successor(
         self, detection: DetectionResult, *, now: float
     ) -> Optional[PersonBox]:
@@ -360,7 +402,9 @@ class PresenterLock:
                          and 0 <= gestures[0] < len(candidates)) else None
                 proposed = candidates[index] if index is not None else None
                 # No selection if another person is too close to disambiguate.
-                if proposed is not None and self._near_another(proposed, candidates):
+                if (proposed is not None
+                        and self._near_another(proposed, candidates)
+                        and not self._distinct_gesture_in_crowd(index, detection)):
                     proposed = None
                 previous = self._gesture_candidate
                 if (proposed is None and len(candidates) == 1 and
