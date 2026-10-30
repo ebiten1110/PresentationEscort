@@ -693,7 +693,7 @@ class PresenterLock:
             (i for i, box in enumerate(candidates) if box is chosen), -1)
         chosen_id = (track_ids[chosen_index] if track_ids
                      and chosen_index >= 0 else None)
-        if (self.state == "TEMPORARILY_LOST"
+        if ((self.state == "TEMPORARILY_LOST" or self.hybrid_gesture_largest)
                 and self._locked_track_id is not None
                 and chosen_id != self._locked_track_id):
             aim = (detection.aim_points[chosen_index]
@@ -711,7 +711,20 @@ class PresenterLock:
                 and not self._competing_face_near_locked(detection)
             )
             if not plausible:
-                self.reason = "HYBRID_WAIT_SAME_FACE_NO_MOTION"
+                if (self.transient_recovery_s > 0
+                        and self._last_confirmed_at is not None
+                        and now - self._last_confirmed_at <= .30):
+                    if self._recovery_deadline is None:
+                        self._recovery_deadline = now + self.transient_recovery_s
+                    if now <= self._recovery_deadline:
+                        # Keep identity memory without issuing a motion
+                        # target; recovering AUTO is a stationary lease.
+                        self.state = "TEMPORARILY_LOST"
+                        self._needs_resume_gesture = True
+                        self._gesture_streak = 0
+                        self.reason = "HYBRID_WAIT_SAME_FACE_NO_MOTION"
+                        return suppressed
+                self._lose("HYBRID_UNVERIFIED_ID_SWITCH")
                 return suppressed
         # A nearby second person can exchange places on the next frame.
         # Do not continue steering through an interaction/occlusion.
