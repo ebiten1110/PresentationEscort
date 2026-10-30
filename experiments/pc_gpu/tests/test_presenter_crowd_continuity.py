@@ -171,6 +171,37 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
         self.assertFalse(result.found)
         self.assertNotEqual(lock.state, "TRACKING")
 
+    def test_real_diagnostic_4950_bystander_box_below_face(self):
+        # Diagnostic (10): stable track 1161 and stable target face (393,222).
+        # A second person with no confident face starts at y=283; this is
+        # NOT an image-space face collision and must not disarm AUTO.
+        lock = self.selected_crowd(
+            self.person(295, 156, 640, 480, .79), (393, 225), 1161)
+        result = lock.observe(self.frame(
+            4, [self.person(288, 152, 636, 480, .76),
+                self.person(228, 283, 373, 480, .55)],
+            [1161, 1249], [],
+            [{"x": 393, "y": 222, "source": "face"},
+             {"x": 313, "y": 388, "source": "shoulders"}]),
+            now=10.21)
+        self.assertTrue(result.found, f"{lock.state} / {lock.reason}")
+        self.assertEqual(lock.state, "TRACKING")
+        self.assertEqual(lock.gesture_event_id, 1)
+        self.assertEqual(lock._locked_track_id, 1161)
+
+    def test_bystander_head_close_to_face_still_stops(self):
+        lock = self.selected_crowd(
+            self.person(295, 156, 640, 480, .79), (393, 225), 1161)
+        result = lock.observe(self.frame(
+            4, [self.person(288, 152, 636, 480, .76),
+                self.person(338, 211, 475, 480, .58)],
+            [1161, 1249], [],
+            [{"x": 393, "y": 222, "source": "face"},
+             {"x": 412, "y": 229, "source": "face"}]),
+            now=10.21)
+        self.assertFalse(result.found)
+        self.assertNotEqual(lock.state, "TRACKING")
+
     def test_candidate_with_wrong_or_duplicate_track_id_is_rejected(self):
         lock = self.selected()
         result = lock.observe(self.frame(
