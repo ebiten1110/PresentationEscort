@@ -461,6 +461,8 @@ class PresenterLock:
                 and 0 <= now - self._last_confirmed_at <= .25
                 and 1 <= len(candidates) <= 8
                 and len(allowed) > 1
+                and not self._competing_face_near_locked(detection)
+                and len({v for v in track_ids if v is not None}) == len(track_ids)
             )
             if self.transient_recovery_s > 0 and (
                     len(candidates) == 0 or selected_id_missing or crowded_ambiguity):
@@ -488,7 +490,9 @@ class PresenterLock:
             if (self.gesture_enabled and self.transient_recovery_s > 0
                     and self._locked_aim is not None
                     and self._last_confirmed_at is not None
-                    and 0 <= now - self._last_confirmed_at <= .25):
+                    and 0 <= now - self._last_confirmed_at <= .25
+                    and not self._competing_face_near_locked(detection)
+                    and len({v for v in track_ids if v is not None}) == len(track_ids)):
                 if self._recovery_deadline is None:
                     self._recovery_deadline = now + self.transient_recovery_s
                 if now <= self._recovery_deadline:
@@ -681,6 +685,24 @@ class PresenterLock:
             if hypot(dx, dy) < min_separation_px:
                 return False
         return True
+
+    def _competing_face_near_locked(self, detection: DetectionResult) -> bool:
+        """Two different faces at the locked face position are unsafe.
+
+        This also rejects uncertain duplicate boxes that were NOT proven to
+        be a single model duplicate by crowd_pose_dedup.
+        """
+        if self._locked_aim is None or not isinstance(detection.aim_points, list):
+            return True
+        close = 0
+        for point in detection.aim_points:
+            if (isinstance(point, dict) and point.get("source") == "face"
+                    and type(point.get("x")) is int
+                    and type(point.get("y")) is int
+                    and hypot(point["x"] - self._locked_aim[0],
+                              point["y"] - self._locked_aim[1]) < 70.):
+                close += 1
+        return close > 1
 
     def _unique_recent_face_successor(
         self, allowed: list[PersonBox], candidates: list[PersonBox],
