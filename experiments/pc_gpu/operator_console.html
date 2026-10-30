@@ -47,12 +47,13 @@
         <div class="gesture-controls">
           <button id="gesture-on" class="primary" disabled>ジェスチャー追従を待機</button>
           <button id="gesture-off" class="quiet" disabled>ジェスチャー待機を解除</button>
-          <button id="largest-on" class="secondary" disabled>最大の人物を自動ロック（別モード）</button>
-          <button id="largest-off" class="quiet" disabled>最大人物モードを解除</button>
+          <button id="largest-on" hidden disabled>最大人物モード（旧互換）</button>
+          <button id="largest-off" hidden disabled>最大人物モード解除（旧互換）</button>
         </div>
-        <p id="gesture-help" class="small-text">待機を有効にして、両手を頭より上に挙げて保持すると対象を選び追従を開始します。見失ったら停止し、新しいジェスチャーを待ちます。</p>
-        <p id="largest-help" class="small-text">最大人物モードは、明確に一番大きい人物を静止中にロックするだけです。モーターは自動起動しません。周囲と距離を確保し、対象を確認後「手動でAUTOを開始」を押してください。</p>
-        <button id="auto" class="secondary" disabled>手動でAUTOを開始</button>
+        <p id="gesture-help" class="small-text">カメラ起動後は自動でジェスチャー待機。両手を頭より上に挙げると追従を開始します。短い見失いは同じ人の顔を照合して復帰します。</p>
+        <p id="largest-help" class="small-text">統合追従：両手を挙げて対象を決定。その後、同じ顔・追跡ID・人物の見かけの大きさで継続追跡します。ジェスチャー以外の操作で開始する必要はありません。</p>
+        <p id="body-motion-note" class="small-text">本体動作：起動モードを確認中</p>
+        <button id="auto" class="secondary" hidden disabled>手動でAUTOを開始（開発者用）</button>
         <button id="stop" class="secondary" disabled>停止 / SAFE</button>
         <button id="estop" class="emergency" disabled>緊急停止（ESTOP）</button>
         <button id="reset" class="quiet" disabled>緊急停止を解除する</button>
