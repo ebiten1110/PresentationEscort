@@ -633,6 +633,12 @@ class PresenterLock:
         meaningful distance between that face and every other person's box.
         Crowds/overlapping faces remain ambiguous and must STOP.
         """
+        if now == 10.21 and chosen.confidence in (.55, .58):
+            print("DBG_FACE_HELPER", "candidate", chosen,
+                  "old", self._locked, "last", self._last_confirmed_at,
+                  "oldaim", self._locked_aim, "old_id", self._locked_track_id,
+                  "idlist", detection.track_ids, "aims", detection.aim_points,
+                  "n", len(candidates))
         if (
             self._locked is None or self._locked_track_id is None
             or self._locked_aim is None or self._locked_aim_source != "face"
