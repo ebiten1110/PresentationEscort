@@ -968,6 +968,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.gesture_control_enabled = False
                 self.largest_control_enabled = False
                 self.presenter.largest_person_enabled = False
+                self.presenter.gesture_enabled = True
                 self._gesture_pending_event = 0
                 self._search_direction = None
                 self._search_result = "LINK_LOST"
@@ -1319,6 +1320,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.gesture_control_enabled = False
                 self.largest_control_enabled = True
                 self.presenter.largest_person_enabled = True
+                self.presenter.gesture_enabled = False
                 self.presenter.clear("WAIT_UNIQUE_DOMINANT_FACE")
                 self._gesture_pending_event = 0
                 return {"ok": True, "largest_control_enabled": True,
@@ -1328,6 +1330,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                     return {"ok": False, "error": "STOP_BEFORE_CHANGING_TARGET_MODE"}
                 self.largest_control_enabled = False
                 self.presenter.largest_person_enabled = False
+                self.presenter.gesture_enabled = True
                 self.presenter.clear("LARGEST_MODE_DISABLED")
                 return {"ok": True, "largest_control_enabled": False}
             if action == "gesture_on":
@@ -1335,6 +1338,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                     return {"ok": False, "error": "GESTURE_STANDBY_REQUIRES_SAFE"}
                 self.largest_control_enabled = False
                 self.presenter.largest_person_enabled = False
+                self.presenter.gesture_enabled = True
                 self.gesture_control_enabled = True
                 self.presenter.clear("WAIT_BOTH_HANDS_OVER_HEAD")
                 self._gesture_handled_event = self.presenter.gesture_event_id
@@ -1351,6 +1355,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
             if action in ("stop", "estop"):
                 self.largest_control_enabled = False
                 self.presenter.largest_person_enabled = False
+                self.presenter.gesture_enabled = True
                 self.gesture_control_enabled = False
                 self._gesture_pending_event = 0
                 self._search_direction = None
