@@ -309,8 +309,12 @@
         ? "一番大きい人物を候補として連続確認中。緑でロックされたら、操作者が対象と周囲の安全を確認してから手動AUTOを押してください。自動ARMはしません。"
         : "最大人物モードはジェスチャー待機との切替式。前景の顔が一意で8フレーム安定した人だけ選びます。選択後も手動AUTOが必要です。";
       byId("gesture-help").textContent = gestureEnabled
-        ? "待機中：両手を頭より上に挙げて保持。認識後、対象が緑になり、ESP32へのAUTO切替を試みます。"
-        : "待機を有効にし、両手を頭より上に挙げて保持。見失ったら停止し、再度ジェスチャーで開始。";
+        ? "統合追従の待機中。両手を頭上に挙げると対象を決め、顔・追跡ID・見かけの大きさを併用して追跡します。短い見失いでは同じ人を再確認します。"
+        : "追従待機は停止中。ジェスチャー待機を有効にすると、手を上げた人を選択します。";
+      const bodyInfo = status.body_motion_permitted === true
+        ? "本体：左右旋回のみ有効。中央付近では首が優先され、連続した方向判定・実測角度・ESP32の空き状態が揃った場合に旋回します。前進歩行は未実装。"
+        : "本体：左右旋回は無効（Head / Monitor）。足を動かすには、実機校正後にBodyモードで起動。前進歩行は未実装。";
+      byId("body-motion-note").textContent = bodyInfo;
       byId("manual").disabled = status.mode === "ESTOP" || !simulated;
       byId("stop").disabled = false;
       byId("estop").disabled = false;
