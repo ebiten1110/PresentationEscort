@@ -417,6 +417,19 @@ class PresenterLock:
                     and .50 <= candidate.height / original.height <= 2.2
                     and abs(candidate.cx - original.cx) <= original.width * .85):
                 allowed = [candidate]
+        if len(candidates) > 1:
+            # In dense crowds the bounding-box continuity test itself can
+            # exclude the right person when the detector crops the body.
+            # Reuse the stricter FACE+track+other-face-separation check to
+            # recover exactly one successor, regardless of body-box shape.
+            # No motor is authorized on ambiguous or zero matches.
+            face_verified = [
+                box for box in candidates
+                if self._separate_stable_tracked_face(
+                    box, candidates, detection, now=now)
+            ]
+            if len(face_verified) == 1:
+                allowed = face_verified
         if len(allowed) > 1:
             # A crowded frame can put multiple BODY boxes in the same area
             # even though just one trusted, fresh FACE remains there.
