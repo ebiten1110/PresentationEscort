@@ -145,7 +145,7 @@ def parse_args(argv=None):
     parser.add_argument("--confidence", type=float, default=0.45)
     parser.add_argument("--model", default="yolo26n-pose.pt",
                         help="Existing local pose model checkpoint")
-    parser.add_argument("--preview-every", type=int, default=3)
+    parser.add_argument("--preview-every", type=int, default=2)
     parser.add_argument("--mode", choices=["monitor", "head", "body"],
                         default="monitor",
                         help="Monitor is non-actuating; head/body require safety checks")
