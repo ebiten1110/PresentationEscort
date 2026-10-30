@@ -695,13 +695,24 @@ class PresenterLock:
         if self._locked_aim is None or not isinstance(detection.aim_points, list):
             return True
         close = 0
-        for point in detection.aim_points:
+        for i, point in enumerate(detection.aim_points):
             if (isinstance(point, dict) and point.get("source") == "face"
                     and type(point.get("x")) is int
-                    and type(point.get("y")) is int
-                    and hypot(point["x"] - self._locked_aim[0],
-                              point["y"] - self._locked_aim[1]) < 70.):
-                close += 1
+                    and type(point.get("y")) is int):
+                if hypot(point["x"] - self._locked_aim[0],
+                         point["y"] - self._locked_aim[1]) < 70.:
+                    close += 1
+            elif i < len(detection.people):
+                # A second detected PERSON with no reliable face whose body
+                # box covers the selected face is not safe to remember as a
+                # distinct identity: immediately discard the lock instead.
+                box = detection.people[i]
+                if (isinstance(box, dict)
+                        and all(type(box.get(k)) is int
+                                for k in ("x1", "y1", "x2", "y2"))
+                        and box["x1"] <= self._locked_aim[0] <= box["x2"]
+                        and box["y1"] <= self._locked_aim[1] <= box["y2"]):
+                    return True
         return close > 1
 
     def _unique_recent_face_successor(
