@@ -139,6 +139,21 @@ class GuardTests(unittest.TestCase):
         self.assertFalse(runtime.action("auto")["ok"])
         self.assertFalse(runtime.action("manual")["ok"])
 
+    def test_usb_camera_auto_standby_is_gesture_only_not_motor_auto(self):
+        runtime = LockedRealRuntime("fake", head_enabled=True)
+        self.addCleanup(runtime.close)
+        runtime.set_camera_state(True, True)
+        self.assertTrue(runtime.gesture_control_enabled)
+        self.assertTrue(runtime.presenter.hybrid_gesture_largest)
+        self.assertFalse(runtime.presenter.largest_person_enabled)
+        self.assertFalse(runtime.presenter.locked)
+        self.assertEqual(runtime.presenter.gesture_event_id, 0)
+        self.assertEqual(runtime.gateway.status().safety.mode, Mode.SAFE)
+        self.assertNotIn("SAFETY_ARM", self.fake.commands)
+        runtime.set_camera_state(False, False)
+        self.assertFalse(runtime.gesture_control_enabled)
+        self.assertFalse(runtime.presenter.hybrid_gesture_largest)
+
     def test_head_planner_never_emits_body_or_pitch(self):
         detection = DetectionResult(
             found=True, center_x=270, center_y=90,
