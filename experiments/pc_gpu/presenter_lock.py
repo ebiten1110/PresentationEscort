@@ -33,6 +33,11 @@ class PresenterLock:
         if not 2 <= gesture_confirm_frames <= 30:
             raise ValueError("gesture confirmation frames invalid")
         self.gesture_enabled = bool(gesture_enabled)
+        # Separate SAFE-only foreground candidate mode; never arms motors.
+        self.largest_person_enabled = False
+        self._largest_streak = 0
+        self._largest_track_id: Optional[int] = None
+        self._largest_box: Optional[PersonBox] = None
         self.gesture_confirm_frames = gesture_confirm_frames
         self.gesture_event_id = 0
         self._gesture_candidate: Optional[PersonBox] = None
@@ -75,6 +80,9 @@ class PresenterLock:
         self._needs_resume_gesture = False
         self._single_candidate_streak = 0
         self._candidate_last = None
+        self._largest_streak = 0
+        self._largest_track_id = None
+        self._largest_box = None
         self._recovery_deadline = None
         self.clear("PC_STREAM_DISCONNECTED")
 
@@ -96,6 +104,9 @@ class PresenterLock:
         self.reason = reason
         self._recovery_deadline = None
         self._single_candidate_streak = 0
+        self._largest_streak = 0
+        self._largest_track_id = None
+        self._largest_box = None
 
     def _lose(self, reason: str) -> None:
         self._locked = None
@@ -115,6 +126,9 @@ class PresenterLock:
         self.reason = reason
         self._recovery_deadline = None
         self._single_candidate_streak = 0
+        self._largest_streak = 0
+        self._largest_track_id = None
+        self._largest_box = None
 
     def confirm_bounded_reacquisition(self) -> None:
         """Clear the gesture reminder after safety's 3-frame in-AUTO recovery.
@@ -126,6 +140,95 @@ class PresenterLock:
             self._needs_resume_gesture = False
             self._gesture_streak = 0
             self.reason = "AUTO_RECALIBRATED_SAME_TRACK"
+
+    def _safe_largest_candidate(self, detection: DetectionResult
+                                ) -> Optional[int]:
+        """Return a uniquely dominant foreground face, never a motor target.
+
+        Largest bounding box is only a coarse distance proxy. Require a
+        strong, stable, uniquely distinguishable face even when there are
+        several people. If any person overlaps the selected face ambiguously,
+        no size-based acquisition is allowed.
+        """
+        candidates = self.candidates
+        ids = self._candidate_track_ids
+        if (not candidates or len(candidates) > self.MAX_PEOPLE
+                or not ids or len(ids) != len(candidates)
+                or not isinstance(detection.aim_points, list)
+                or len(detection.aim_points) != len(candidates)):
+            return None
+        areas = [(b.width * b.height, i) for i, b in enumerate(candidates)]
+        areas.sort(reverse=True)
+        area, index = areas[0]
+        target = candidates[index]
+        if (target.confidence < .65
+                or area < detection.frame_width * detection.frame_height * .10
+                or (len(areas) > 1 and area < areas[1][0] * 1.65)
+                or ids[index] is None
+                or len({v for v in ids if v is not None}) != len(ids)):
+            return None
+        point = detection.aim_points[index]
+        if (not isinstance(point, dict) or point.get("source") != "face"
+                or type(point.get("x")) is not int
+                or type(point.get("y")) is not int):
+            return None
+        x, y = point["x"], point["y"]
+        # Other faces must be clearly separated. A faceless person's box
+        # covering the candidate's face is an ambiguous situation.
+        for other_index, other in enumerate(candidates):
+            if other_index == index:
+                continue
+            aim = detection.aim_points[other_index]
+            if (isinstance(aim, dict) and aim.get("source") == "face"
+                    and type(aim.get("x")) is int
+                    and type(aim.get("y")) is int):
+                if hypot(aim["x"] - x, aim["y"] - y) < max(
+                        72., detection.frame_width * .12):
+                    return None
+            elif other.x1 <= x <= other.x2 and other.y1 <= y <= other.y2:
+                return None
+        return index
+
+    def _consider_largest_selection(
+        self, detection: DetectionResult, *, now: float
+    ) -> bool:
+        """Acquire dominant person after 8 visually stable frames in SAFE.
+
+        This NEVER increments gesture_event_id: firmware AUTO still requires
+        the operator to review and click ARM after selection.
+        """
+        index = self._safe_largest_candidate(detection)
+        if index is None:
+            self._largest_streak = 0
+            self._largest_track_id = None
+            self._largest_box = None
+            self.reason = "LARGEST_CANDIDATE_UNCERTAIN"
+            return False
+        candidate = self.candidates[index]
+        identity = self._candidate_track_ids[index]
+        prior = self._largest_box
+        stable = (
+            identity == self._largest_track_id
+            and prior is not None
+            and abs(candidate.cx - prior.cx) <= max(25., prior.width * .18)
+            and abs(candidate.cy - prior.cy) <= max(25., prior.height * .18)
+            and .70 <= candidate.width / prior.width <= 1.40
+            and .70 <= candidate.height / prior.height <= 1.40
+        )
+        self._largest_streak = self._largest_streak + 1 if stable else 1
+        self._largest_track_id = identity
+        self._largest_box = candidate
+        self.reason = "LARGEST_CANDIDATE_CONFIRMING"
+        if self._largest_streak < 8:
+            return False
+        self._locked = candidate
+        self._locked_track_id = identity
+        self._last_confirmed_at = now
+        self.locked = True
+        self.state = "TRACKING"
+        self.reason = "LARGEST_LOCKED_REQUIRES_MANUAL_AUTO"
+        self._largest_streak = 0
+        return True
 
     def observe(self, detection: DetectionResult, *, now: float) -> DetectionResult:
         """Process complete V2 frames; output only a human-locked person."""
@@ -197,13 +300,17 @@ class PresenterLock:
         self._candidate_track_ids = track_ids
 
         self._last_gestures = detection.gesture_indices if isinstance(detection.gesture_indices, list) else []
+        self._last_aim_points = detection.aim_points if isinstance(detection.aim_points, list) else []
         self._history[self._last_seq] = (now, list(candidates))
         self._history = {
             seq: item for seq, item in self._history.items()
             if now - item[0] <= self.MAX_FRAME_AGE_S
         }
         if not self.locked or self._locked is None:
-            if self.gesture_enabled:
+            if self.largest_person_enabled:
+                if not self._consider_largest_selection(detection, now=now):
+                    return suppressed
+            elif self.gesture_enabled:
                 gestures = detection.gesture_indices
                 index = gestures[0] if (isinstance(gestures, list)
                          and len(gestures) == 1 and type(gestures[0]) is int
@@ -843,6 +950,12 @@ class PresenterLock:
             "velocity_px_s": [round(self._velocity_x, 1),
                               round(self._velocity_y, 1)],
             "gesture_enabled": self.gesture_enabled,
+            "largest_person_enabled": self.largest_person_enabled,
+            "largest_candidate_index": (
+                self._safe_largest_candidate(detection=DetectionResult(
+                    found=False, frame_width=fw, frame_height=fh,
+                    aim_points=getattr(self, "_last_aim_points", [])))
+                if recent else None),
             "gesture_event_id": self.gesture_event_id,
             "gesture_hint": "両手を頭の上に挙げて、そのまま保持",
             "presenter_selected": self.locked and recent and self.state in ("TRACKING", "SELECTED_WAIT_NEXT_FRAME"),
