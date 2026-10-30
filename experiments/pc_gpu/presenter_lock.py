@@ -418,7 +418,31 @@ class PresenterLock:
                     and abs(candidate.cx - original.cx) <= original.width * .85):
                 allowed = [candidate]
         if len(allowed) != 1:
-            if self.transient_recovery_s > 0 and len(candidates) == 0:
+            # If the selected GPU ID disappears for a single frame while
+            # *other* people remain visible, keep only a NON-ACTUATING visual
+            # hint. Previously this cleared the lock immediately (e.g. 554,
+            # 605, 648, 728); safety must still STOP and require a new gesture
+            # after any disarm. Never infer the target from an unrelated ID.
+            selected_id_missing = (
+                self._locked_track_id is not None
+                and self._locked_aim is not None
+                and self._locked_aim_source == "face"
+                and self._last_confirmed_at is not None
+                and 0 <= now - self._last_confirmed_at <= .30
+                and bool(track_ids)
+                and self._locked_track_id not in track_ids
+                and len(candidates) <= 3
+                and all(
+                    hypot(
+                        max(box.x1 - self._locked_aim[0], 0,
+                            self._locked_aim[0] - box.x2),
+                        max(box.y1 - self._locked_aim[1], 0,
+                            self._locked_aim[1] - box.y2),
+                    ) >= max(65., detection.frame_width * .10)
+                    for box in candidates
+                )
+            )
+            if self.transient_recovery_s > 0 and (len(candidates) == 0 or selected_id_missing):
                 if self._recovery_deadline is None:
                     self._recovery_deadline = now + self.transient_recovery_s
                 if now <= self._recovery_deadline:
@@ -434,8 +458,12 @@ class PresenterLock:
         chosen = allowed[0]
         # A nearby second person can exchange places on the next frame.
         # Do not continue steering through an interaction/occlusion.
-        if (self._near_another(chosen, candidates) and not
-                self._distinct_face_match(chosen, candidates, detection)):
+        if (
+            self._near_another(chosen, candidates)
+            and not self._distinct_face_match(chosen, candidates, detection)
+            and not self._separate_stable_tracked_face(
+                chosen, candidates, detection, now=now)
+        ):
             self._lose("AMBIGUOUS_NEARBY_PERSON")
             return suppressed
         self._recovery_deadline = None
@@ -532,6 +560,74 @@ class PresenterLock:
                 return False
             if hypot(point["x"] - other["x"], point["y"] - other["y"]) < max(
                     60., detection.frame_width * .13):
+                return False
+        return True
+
+    def _separate_stable_tracked_face(
+        self, chosen: PersonBox, candidates: list[PersonBox],
+        detection: DetectionResult, *, now: float,
+    ) -> bool:
+        """Allow an unchanged GPU track beside *separate* other faces/bodies.
+
+        A wide foreground body box makes center-distance alone reject people
+        standing far apart in the image (diagnostic: frame 739). This exception
+        requires independently matching tracker ID, recent stable face, and
+        meaningful distance between that face and every other person's box.
+        Crowds/overlapping faces remain ambiguous and must STOP.
+        """
+        if (
+            self._locked is None or self._locked_track_id is None
+            or self._locked_aim is None or self._locked_aim_source != "face"
+            or self._last_confirmed_at is None
+            or not 0 <= now - self._last_confirmed_at <= 0.30
+            or not isinstance(detection.track_ids, list)
+            or len(detection.track_ids) != len(candidates)
+            or not isinstance(detection.aim_points, list)
+            or len(detection.aim_points) != len(candidates)
+            or not 1 < len(candidates) <= 3
+        ):
+            return False
+        try:
+            index = next(i for i, box in enumerate(candidates) if box is chosen)
+        except StopIteration:
+            return False
+        if (
+            detection.track_ids[index] != self._locked_track_id
+            or any(track is None or track == self._locked_track_id
+                   for i, track in enumerate(detection.track_ids) if i != index)
+        ):
+            return False
+        previous = self._locked
+        if (
+            not 0.7 <= chosen.width / previous.width <= 1.4
+            or not 0.65 <= chosen.height / previous.height <= 1.5
+            or abs(chosen.cx - previous.cx) > max(24., previous.width * .23)
+            or abs(chosen.cy - previous.cy) > max(24., previous.height * .23)
+        ):
+            return False
+        aim = detection.aim_points[index]
+        if (
+            not isinstance(aim, dict) or aim.get("source") != "face"
+            or type(aim.get("x")) is not int or type(aim.get("y")) is not int
+        ):
+            return False
+        face_x, face_y = aim["x"], aim["y"]
+        if (
+            not chosen.x1 <= face_x <= chosen.x2
+            or not chosen.y1 <= face_y <= chosen.y2
+            or hypot(face_x - self._locked_aim[0],
+                     face_y - self._locked_aim[1]) > 45.
+        ):
+            return False
+        # Distance to the *other bounding boxes*, not their box centers.
+        # A person's box extending near the selected face remains ambiguous.
+        min_separation_px = max(65., detection.frame_width * .10)
+        for i, other in enumerate(candidates):
+            if i == index:
+                continue
+            dx = max(other.x1 - face_x, 0, face_x - other.x2)
+            dy = max(other.y1 - face_y, 0, face_y - other.y2)
+            if hypot(dx, dy) < min_separation_px:
                 return False
         return True
 
