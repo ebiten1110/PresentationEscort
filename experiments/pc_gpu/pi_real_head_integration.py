@@ -681,6 +681,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                                        gesture_confirm_frames=3,
                                        transient_recovery_s=1.5)
         self.gesture_control_enabled = False
+        self.largest_control_enabled = False
         self._gesture_handled_event = 0
         self._gesture_pending_event = 0
         self._gesture_pending_since = 0.0
@@ -965,6 +966,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 # New PC connection must not inherit old operator gesture
                 # authorization. An operator must re-enable standby.
                 self.gesture_control_enabled = False
+                self.largest_control_enabled = False
+                self.presenter.largest_person_enabled = False
                 self._gesture_pending_event = 0
                 self._search_direction = None
                 self._search_result = "LINK_LOST"
@@ -989,7 +992,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
         if mode == Mode.AUTO and firmware == "ARMED":
             self._last_led_color = "WHITE"
             return
-        desired = ("YELLOW" if self.gesture_control_enabled and
+        desired = ("YELLOW" if (self.gesture_control_enabled or self.largest_control_enabled) and
                    mode == Mode.SAFE and firmware == "DISARMED"
                    else "RED")
         if (desired != self._last_led_color or
@@ -1079,6 +1082,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 if self._camera_interval_s is not None and self._camera_interval_s > 0
                 else None)
             status["gesture_control_enabled"] = self.gesture_control_enabled
+            status["largest_control_enabled"] = self.largest_control_enabled
             status["search_state"] = ("SEARCHING" if self.gateway.safety.recovering
                                       else self._search_result)
             status["search_direction"] = self._search_direction
@@ -1093,7 +1097,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 status["search_max_turns"] = 0
             status["led_indicated_color"] = (
                 "WHITE" if status["mode"] == "AUTO" and status["fw_safety"] == "ARMED"
-                else "YELLOW" if self.gesture_control_enabled and
+                else "YELLOW" if (self.gesture_control_enabled or self.largest_control_enabled) and
                      status["mode"] == "SAFE" and status["fw_safety"] == "DISARMED"
                 else "RED"
             )
@@ -1288,6 +1292,7 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 "camera_active", "pc_connected", "camera_resolution",
                 "preview_available", "preview_age_ms", "camera_effective_fps",
                 "inference_ms", "rtt_ms", "lock_state", "lock_reason",
+                "largest_control_enabled", "largest_candidate_index",
                 "presenter_selected", "gesture_control_enabled",
                 "esp32_head_feedback", "esp32_walking_feedback", "follow_debug",
                 "search_state", "head_speed_limit_deg_s", "pitch_tracking_enabled",
@@ -1307,9 +1312,29 @@ class LockedRealRuntime(LockedSimulationRuntime):
 
     def action(self, action: str) -> dict:
         with self._guard:
+            if action == "largest_on":
+                if not self.head_enabled or self.gateway.status().safety.mode != Mode.SAFE:
+                    return {"ok": False, "error": "LARGEST_MODE_REQUIRES_SAFE"}
+                # SAFE-only foreground acquisition. Deliberately no ARM.
+                self.gesture_control_enabled = False
+                self.largest_control_enabled = True
+                self.presenter.largest_person_enabled = True
+                self.presenter.clear("WAIT_UNIQUE_DOMINANT_FACE")
+                self._gesture_pending_event = 0
+                return {"ok": True, "largest_control_enabled": True,
+                        "manual_auto_required": True}
+            if action == "largest_off":
+                if self.gateway.status().safety.mode != Mode.SAFE:
+                    return {"ok": False, "error": "STOP_BEFORE_CHANGING_TARGET_MODE"}
+                self.largest_control_enabled = False
+                self.presenter.largest_person_enabled = False
+                self.presenter.clear("LARGEST_MODE_DISABLED")
+                return {"ok": True, "largest_control_enabled": False}
             if action == "gesture_on":
                 if not self.head_enabled or self.gateway.status().safety.mode != Mode.SAFE:
                     return {"ok": False, "error": "GESTURE_STANDBY_REQUIRES_SAFE"}
+                self.largest_control_enabled = False
+                self.presenter.largest_person_enabled = False
                 self.gesture_control_enabled = True
                 self.presenter.clear("WAIT_BOTH_HANDS_OVER_HEAD")
                 self._gesture_handled_event = self.presenter.gesture_event_id
@@ -1324,6 +1349,8 @@ class LockedRealRuntime(LockedSimulationRuntime):
                 self.presenter.clear("GESTURE_STANDBY_DISABLED")
                 return {"ok": True, "gesture_control_enabled": False}
             if action in ("stop", "estop"):
+                self.largest_control_enabled = False
+                self.presenter.largest_person_enabled = False
                 self.gesture_control_enabled = False
                 self._gesture_pending_event = 0
                 self._search_direction = None
