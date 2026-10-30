@@ -9,6 +9,7 @@ param(
     [string]$CameraBackend = "auto",
     [string]$Model = "yolo26n-pose.pt",
     [int]$ImageSize = 640,
+    [ValidateRange(1,10)][int]$PreviewEvery = 2,
     [switch]$BenchSecured,
     [switch]$NeutralCalibrated,
     [switch]$PhysicalCutoffTested,
@@ -41,6 +42,7 @@ $pyArgs = @(
     "--camera-index", [string]$CameraIndex,
     "--camera-backend", $CameraBackend,
     "--image-size", [string]$ImageSize,
+    "--preview-every", [string]$PreviewEvery,
     "--mode", $Mode.ToLowerInvariant(),
     "--model", $Model
 )
