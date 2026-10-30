@@ -802,7 +802,18 @@ class PresenterLock:
                 continue
             dx = max(other.x1 - face_x, 0, face_x - other.x2)
             dy = max(other.y1 - face_y, 0, face_y - other.y2)
-            if hypot(dx, dy) < min_separation_px:
+            # Diagnostic frame 4950: the same tracked FACE (393,222)
+            # remained stable, while another person was detected only below
+            # y=283 and had no reliable face pose. A large full-body box
+            # should not veto a face that is physically ABOVE that box.
+            # This exemption requires the SAME GPU track; an ID switch
+            # remains more conservative. Never allow an overlapping head.
+            clearly_below_face = (
+                same_track
+                and other.y1 - face_y >= max(48., detection.frame_height * .10)
+                and other.y1 > chosen.y1
+            )
+            if not clearly_below_face and hypot(dx, dy) < min_separation_px:
                 return False
         return True
 
