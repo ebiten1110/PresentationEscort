@@ -826,6 +826,12 @@ class LockedRealRuntime(LockedSimulationRuntime):
                                                detection.frame_height) or
                 not math.isfinite(rtt_ms) or not 0 <= rtt_ms <= 500):
             return False
+        if not detection.people and len(self.presenter.candidates) != 1:
+            # For crowd-sized previous frames, holding AUTO requires a
+            # positively tracked selected face, not generic crowd geometry.
+            if (getattr(self.presenter, "_locked_track_id", None) is None
+                    or getattr(self.presenter, "_locked_aim", None) is None):
+                return False
         if detection.people:
             # Other people may remain in view when the original track ID
             # disappears. Hold the existing AUTO lease for visual recovery,
