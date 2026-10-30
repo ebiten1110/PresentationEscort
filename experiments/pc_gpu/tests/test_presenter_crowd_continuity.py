@@ -79,10 +79,22 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
                          "reappearance must never synthesize an ARM gesture")
         self.assertTrue(restored.found)
 
+    def selected_crowd(self, box, face, track_id):
+        lock = PresenterLock(gesture_enabled=True, gesture_confirm_frames=3,
+                             transient_recovery_s=1.5)
+        for seq in (1, 2, 3):
+            lock.observe(self.frame(
+                seq, [box], [track_id], [0],
+                [{"x": face[0], "y": face[1], "source": "face"}]),
+                now=10.0 + (seq - 1) * .07)
+        self.assertEqual(lock.state, "TRACKING")
+        return lock
+
     def test_crowd_two_body_matches_but_only_one_matching_face(self):
         # At diagnostic frame 967 target ID 83 temporarily becomes 326.
         # Other person (332) has a separate face, though body boxes overlap.
-        lock = self.selected()
+        lock = self.selected_crowd(
+            self.person(196, 116, 601, 480, .62), (356, 209), 83)
         result = lock.observe(self.frame(
             4, [self.person(0, 257, 55, 480, .70),
                 self.person(94, 141, 370, 480, .60),
@@ -92,13 +104,14 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
              {"x": 216, "y": 263, "source": "face"},
              {"x": 223, "y": 273, "source": "face"}]),
             now=10.21)
-        # Last sample face was (221,275): the chosen face is (223,273).
+        # Stored face 356,209 uniquely matches new ID 326 face 360,210.
         self.assertTrue(result.found)
         self.assertEqual(lock.state, "TRACKING")
         self.assertEqual(lock.gesture_event_id, 1)
 
     def test_crowd_nearby_bodies_but_distinct_faces_keep_lock(self):
-        lock = self.selected()
+        lock = self.selected_crowd(
+            self.person(230, 103, 561, 480, .60), (411, 200), 326)
         result = lock.observe(self.frame(
             4, [self.person(0, 365, 59, 480, .76),
                 self.person(48, 326, 223, 480, .52),
