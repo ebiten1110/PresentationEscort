@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from detection_protocol import DetectionResult
 from presenter_lock import PresenterLock
+from person_tracker import PersonBox
 
 
 class PresenterCrowdContinuityTests(unittest.TestCase):
@@ -95,6 +96,20 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
         # Other person (332) has a separate face, though body boxes overlap.
         lock = self.selected_crowd(
             self.person(196, 116, 601, 480, .62), (356, 209), 83)
+        self.assertEqual(lock._locked_aim, (356, 209), "selected prior face lost")
+        det = self.frame(
+            4, [self.person(0, 257, 55, 480, .70),
+                self.person(94, 141, 370, 480, .60),
+                self.person(270, 128, 525, 480, .55)],
+            [335, 332, 326], [],
+            [{"x": 28, "y": 308, "source": "upper_body"},
+             {"x": 216, "y": 263, "source": "face"},
+             {"x": 360, "y": 210, "source": "face"}])
+        other_boxes = [PersonBox(*[p[k] for k in ("x1", "y1", "x2", "y2")], p["confidence"])
+                       for p in det.people]
+        self.assertTrue(lock._separate_stable_tracked_face(
+            other_boxes[2], other_boxes, det, now=10.21),
+            "distinct-face helper failed for body-overlap scene")
         result = lock.observe(self.frame(
             4, [self.person(0, 257, 55, 480, .70),
                 self.person(94, 141, 370, 480, .60),
@@ -112,6 +127,23 @@ class PresenterCrowdContinuityTests(unittest.TestCase):
     def test_crowd_nearby_bodies_but_distinct_faces_keep_lock(self):
         lock = self.selected_crowd(
             self.person(230, 103, 561, 480, .60), (411, 200), 326)
+        self.assertEqual(lock._locked_aim, (411, 200), "selected prior face lost")
+        det = self.frame(
+            4, [self.person(0, 365, 59, 480, .76),
+                self.person(48, 326, 223, 480, .52),
+                self.person(207, 351, 324, 480, .65),
+                self.person(213, 108, 621, 478, .58)],
+            [360, 378, 379, 83], [],
+            [{"x": 30, "y": 391, "source": "upper_body"},
+             {"x": 136, "y": 361, "source": "upper_body"},
+             {"x": 264, "y": 397, "source": "face"},
+             {"x": 407, "y": 199, "source": "face"}])
+        box = PersonBox(213, 108, 621, 478, .58)
+        other_boxes = [PersonBox(*[p[k] for k in ("x1", "y1", "x2", "y2")], p["confidence"])
+                       for p in det.people]
+        self.assertTrue(lock._separate_stable_tracked_face(
+            other_boxes[3], other_boxes, det, now=10.21),
+            "distinct-face helper failed for four-person scene")
         result = lock.observe(self.frame(
             4, [self.person(0, 365, 59, 480, .76),
                 self.person(48, 326, 223, 480, .52),
